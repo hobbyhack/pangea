@@ -10,9 +10,10 @@ Controls:
     +/-    → Adjust fast-forward speed multiplier (2×–20×)
     D      → Toggle debug overlay (vision ranges, energy bars)
     E      → Toggle evolution panel (minimap, trait graphs)
+    S      → Toggle settings panel (right-side overlay with save/load)
     F11    → Toggle fullscreen
     1-6    → Select player tool (Isolation mode)
-    ESC    → Pause menu
+    ESC    → Pause menu (or close settings panel if open)
     Left-click → Use active tool
 """
 
@@ -39,6 +40,7 @@ from pangea.menu import Menu
 from pangea.renderer import Renderer
 from pangea.save_load import load_species, save_species
 from pangea.settings import SimSettings
+from pangea.settings_panel import SettingsPanel
 from pangea.tools import TOOL_LIST, PlayerTools
 from pangea.world import World
 
@@ -64,6 +66,7 @@ class Simulation:
         self.generation_history: list[dict] = []
         self.settings = SimSettings()
         self.tools = PlayerTools()
+        self.settings_panel = SettingsPanel()
 
     def _toggle_fullscreen(self) -> None:
         """Toggle between windowed and fullscreen mode."""
@@ -310,6 +313,19 @@ class Simulation:
                     self.running = False
                     return "main_menu"
 
+                # S key toggles the settings panel
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
+                    self.settings_panel.toggle()
+                    continue
+
+                # Route events to settings panel first (it consumes them when visible)
+                if self.settings_panel.visible:
+                    self.settings = self.settings_panel.handle_event(event, self.settings)
+                    # If the click was inside the panel, skip normal handling
+                    if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEWHEEL):
+                        if self.settings_panel.consumes_click(*pygame.mouse.get_pos()):
+                            continue
+
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_F11:
                         self._toggle_fullscreen()
@@ -326,13 +342,16 @@ class Simulation:
                     elif event.key == pygame.K_e:
                         self.show_evolution_panel = not self.show_evolution_panel
                     elif event.key == pygame.K_ESCAPE:
-                        pause_result, self.settings = self.menu.show_pause_menu(
-                            mode, self.settings
-                        )
-                        if pause_result == "resume":
-                            self.paused = False
-                        elif pause_result in ("save_quit", "main_menu", "restart"):
-                            return pause_result
+                        if self.settings_panel.visible:
+                            self.settings_panel.visible = False
+                        else:
+                            pause_result, self.settings = self.menu.show_pause_menu(
+                                mode, self.settings
+                            )
+                            if pause_result == "resume":
+                                self.paused = False
+                            elif pause_result in ("save_quit", "main_menu", "restart"):
+                                return pause_result
                     # Tool hotkeys (1-6)
                     elif mode == "isolation" and pygame.K_1 <= event.key <= pygame.K_6:
                         tool_idx = event.key - pygame.K_1
@@ -343,12 +362,15 @@ class Simulation:
                 # Right-click to inspect creature (any mode)
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
                     mx, my = event.pos
-                    if not self.renderer.try_select_creature(world, mx, my):
-                        self.renderer.deselect_creature()
+                    if not self.settings_panel.consumes_click(mx, my):
+                        if not self.renderer.try_select_creature(world, mx, my):
+                            self.renderer.deselect_creature()
 
                 if mode == "isolation":
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         mx, my = event.pos
+                        if self.settings_panel.consumes_click(mx, my):
+                            continue
                         # Check if click is on toolbar area (top-right)
                         toolbar_x = config.WINDOW_WIDTH - 380
                         if my < 75 and mx > toolbar_x:
@@ -377,8 +399,12 @@ class Simulation:
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     # Convergence mode — left-click to inspect
                     mx, my = event.pos
-                    if not self.renderer.try_select_creature(world, mx, my):
-                        self.renderer.deselect_creature()
+                    if not self.settings_panel.consumes_click(mx, my):
+                        if not self.renderer.try_select_creature(world, mx, my):
+                            self.renderer.deselect_creature()
+
+            # Update settings panel dragging
+            self.settings = self.settings_panel.update_dragging(self.settings)
 
             # Update simulation (skip if paused)
             if not self.paused:
@@ -407,6 +433,7 @@ class Simulation:
                 )
             if mode == "isolation" and self.tools.active_tool != "none":
                 self.renderer.draw_tool_cursor(self.tools)
+            self.settings_panel.draw(self.screen, self.settings, dt)
             pygame.display.flip()
 
         return "done"

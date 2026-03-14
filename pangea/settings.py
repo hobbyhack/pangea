@@ -8,7 +8,10 @@ gets a SimSettings instance that flows through World, Evolution, etc.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import json
+import os
+from dataclasses import dataclass, fields, field
+from pathlib import Path
 
 from pangea import config
 
@@ -83,6 +86,37 @@ class SimSettings:
     predator_radius: float = config.PREDATOR_RADIUS
     predator_stamina: float = 0.0
     predator_respawn_interval: float = 0.0
+
+    def to_dict(self) -> dict:
+        """Serialize all settings to a plain dict."""
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> SimSettings:
+        """Create SimSettings from a dict, ignoring unknown keys."""
+        valid = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in valid})
+
+    def save_to_file(self, filepath: str) -> None:
+        """Save settings to a JSON file."""
+        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def load_from_file(cls, filepath: str) -> SimSettings:
+        """Load settings from a JSON file."""
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
+    @staticmethod
+    def list_settings_files(directory: str = "settings") -> list[str]:
+        """List all .json settings files in a directory."""
+        path = Path(directory)
+        if not path.exists():
+            return []
+        return sorted(f.name for f in path.glob("*.json"))
 
     def copy(self) -> SimSettings:
         """Create an independent copy of these settings."""
