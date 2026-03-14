@@ -26,6 +26,7 @@ from pangea.config import (
     COLOR_PREDATOR,
 )
 import pangea.config as config
+from pangea.config import EVOLUTION_POINTS
 from pangea.creature import Creature
 from pangea.tools import (
     TOOL_BARRIER,
@@ -174,6 +175,7 @@ class Renderer:
         paused: bool = False,
         tools: PlayerTools | None = None,
         show_toolbar: bool = False,
+        fast_forward: int = 0,
     ) -> None:
         """Draw the complete frame."""
         self.frame += 1
@@ -226,6 +228,10 @@ class Renderer:
         # Toolbar
         if show_toolbar and tools:
             self._draw_toolbar(tools)
+
+        if fast_forward:
+            label = self.font.render(f">> {fast_forward}x", True, (255, 200, 80))
+            self.surface.blit(label, (config.WINDOW_WIDTH // 2 - label.get_width() // 2, 6))
 
         if paused:
             self._draw_pause_indicator()
@@ -607,7 +613,7 @@ class Renderer:
             y += 20
 
         # Controls hint at bottom
-        controls = "SPACE=Pause  F=Fast  D=Debug  1-6=Tools  ESC=Menu"
+        controls = "SPACE=Pause  F=Fast  +/-=Speed  D=Debug  E=Evo  1-6=Tools  ESC=Menu"
         text = self.font_small.render(controls, True, (70, 70, 95))
         self.surface.blit(text, (10, config.WINDOW_HEIGHT - 22))
 
@@ -785,3 +791,225 @@ class Renderer:
         """Reset particle/trail tracking for a new generation."""
         self._prev_alive.clear()
         self._prev_food_eaten.clear()
+
+    # ── Evolution Panel ──────────────────────────────────────
+
+    def draw_evolution_panel(
+        self,
+        world: World,
+        mode: str,
+        generation_history: list[dict],
+    ) -> None:
+        """
+        Draw a side panel showing a creature minimap and trait evolution graphs.
+
+        Args:
+            world: Current world state.
+            mode: "isolation" or "convergence".
+            generation_history: List of dicts with keys:
+                gen, avg_speed, avg_size, avg_vision, avg_efficiency, avg_lifespan,
+                avg_food, alive_pct
+        """
+        panel_w = 320
+        panel_h = config.WINDOW_HEIGHT - 20
+        panel_x = config.WINDOW_WIDTH - panel_w - 10
+        panel_y = 10
+
+        # Semi-transparent panel background
+        panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        panel.fill((10, 12, 25, 210))
+        # Border
+        pygame.draw.rect(panel, (50, 55, 80), (0, 0, panel_w, panel_h), 1, border_radius=6)
+        self.surface.blit(panel, (panel_x, panel_y))
+
+        # ── Title ──
+        title = self.font_large.render("Evolution", True, (140, 180, 255))
+        self.surface.blit(title, (panel_x + 12, panel_y + 8))
+
+        # ── Minimap ──
+        map_x = panel_x + 12
+        map_y = panel_y + 40
+        map_w = panel_w - 24
+        map_h = 150
+
+        # Minimap background
+        pygame.draw.rect(self.surface, (20, 22, 35), (map_x, map_y, map_w, map_h), border_radius=4)
+        pygame.draw.rect(self.surface, (40, 45, 60), (map_x, map_y, map_w, map_h), 1, border_radius=4)
+
+        # Scale factors
+        sx = map_w / max(config.WINDOW_WIDTH, 1)
+        sy = map_h / max(config.WINDOW_HEIGHT, 1)
+
+        # Draw food dots on minimap
+        for food in world.food:
+            fx = map_x + int(food.x * sx)
+            fy = map_y + int(food.y * sy)
+            pygame.draw.circle(self.surface, (40, 140, 40), (fx, fy), 1)
+
+        # Draw creature dots on minimap
+        for creature in world.creatures:
+            if not creature.alive:
+                continue
+            cx = map_x + int(creature.x * sx)
+            cy = map_y + int(creature.y * sy)
+            color = self._creature_color(creature, mode)
+            # Larger dot for bigger creatures
+            r = max(2, int(creature.dna.effective_radius * sx * 2))
+            pygame.draw.circle(self.surface, color, (cx, cy), r)
+
+        # Minimap label
+        label = self.font_small.render(
+            f"Minimap — {world.alive_count()} alive", True, (120, 130, 160),
+        )
+        self.surface.blit(label, (map_x, map_y + map_h + 4))
+
+        # ── Current Population Trait Averages (bar chart) ──
+        bar_y = map_y + map_h + 26
+        bar_label = self.font.render("Avg Traits (this gen)", True, (180, 200, 230))
+        self.surface.blit(bar_label, (panel_x + 12, bar_y))
+        bar_y += 24
+
+        alive = [c for c in world.creatures if c.alive]
+        if alive:
+            avg_speed = sum(c.dna.speed for c in alive) / len(alive)
+            avg_size = sum(c.dna.size for c in alive) / len(alive)
+            avg_vision = sum(c.dna.vision for c in alive) / len(alive)
+            avg_eff = sum(c.dna.efficiency for c in alive) / len(alive)
+            avg_life = sum(c.dna.lifespan for c in alive) / len(alive)
+        else:
+            avg_speed = avg_size = avg_vision = avg_eff = avg_life = 0
+
+        traits = [
+            ("SPD", avg_speed, (80, 200, 255)),
+            ("SIZ", avg_size, (255, 140, 60)),
+            ("VIS", avg_vision, (180, 100, 255)),
+            ("EFF", avg_eff, (100, 255, 120)),
+            ("LIF", avg_life, (220, 200, 60)),
+        ]
+        max_pts = EVOLUTION_POINTS * 0.6  # scale bar — rarely above 60% of budget
+        bar_w_max = panel_w - 80
+        for name, val, color in traits:
+            # Label
+            lbl = self.font_small.render(f"{name}", True, color)
+            self.surface.blit(lbl, (panel_x + 12, bar_y))
+            # Bar background
+            bx = panel_x + 50
+            pygame.draw.rect(
+                self.surface, (30, 32, 45),
+                (bx, bar_y + 2, bar_w_max, 12), border_radius=3,
+            )
+            # Bar fill
+            fill_w = max(1, int(bar_w_max * min(val / max_pts, 1.0)))
+            pygame.draw.rect(
+                self.surface, color,
+                (bx, bar_y + 2, fill_w, 12), border_radius=3,
+            )
+            # Value
+            val_text = self.font_small.render(f"{val:.0f}", True, (160, 170, 190))
+            self.surface.blit(val_text, (bx + bar_w_max + 4, bar_y))
+            bar_y += 20
+
+        # ── Generation History Graph ──
+        if len(generation_history) >= 2:
+            graph_y = bar_y + 16
+            graph_label = self.font.render("Trait Evolution", True, (180, 200, 230))
+            self.surface.blit(graph_label, (panel_x + 12, graph_y))
+            graph_y += 24
+
+            graph_x = panel_x + 12
+            graph_w = panel_w - 24
+            graph_h = 120
+
+            # Graph background
+            pygame.draw.rect(
+                self.surface, (20, 22, 35),
+                (graph_x, graph_y, graph_w, graph_h), border_radius=4,
+            )
+            pygame.draw.rect(
+                self.surface, (40, 45, 60),
+                (graph_x, graph_y, graph_w, graph_h), 1, border_radius=4,
+            )
+
+            # Gridlines
+            for i in range(1, 4):
+                gy = graph_y + int(graph_h * i / 4)
+                pygame.draw.line(
+                    self.surface, (30, 35, 50),
+                    (graph_x, gy), (graph_x + graph_w, gy),
+                )
+
+            history = generation_history
+            n = len(history)
+            x_step = graph_w / max(n - 1, 1)
+
+            # Find y range across all traits
+            all_vals = []
+            for h in history:
+                all_vals.extend([
+                    h["avg_speed"], h["avg_size"], h["avg_vision"],
+                    h["avg_efficiency"], h["avg_lifespan"],
+                ])
+            y_min = max(0, min(all_vals) - 2)
+            y_max = max(all_vals) + 2
+            y_range = max(y_max - y_min, 1)
+
+            trait_keys = [
+                ("avg_speed", (80, 200, 255)),
+                ("avg_size", (255, 140, 60)),
+                ("avg_vision", (180, 100, 255)),
+                ("avg_efficiency", (100, 255, 120)),
+                ("avg_lifespan", (220, 200, 60)),
+            ]
+
+            for key, color in trait_keys:
+                points = []
+                for i, h in enumerate(history):
+                    px = graph_x + int(i * x_step)
+                    py = graph_y + graph_h - int(
+                        (h[key] - y_min) / y_range * graph_h
+                    )
+                    py = max(graph_y, min(graph_y + graph_h, py))
+                    points.append((px, py))
+                if len(points) >= 2:
+                    pygame.draw.lines(self.surface, color, False, points, 2)
+
+            # Generation axis labels
+            gen_start = self.font_small.render(
+                f"G{history[0]['gen']}", True, (90, 95, 110),
+            )
+            gen_end = self.font_small.render(
+                f"G{history[-1]['gen']}", True, (90, 95, 110),
+            )
+            self.surface.blit(gen_start, (graph_x, graph_y + graph_h + 4))
+            self.surface.blit(
+                gen_end,
+                (graph_x + graph_w - gen_end.get_width(), graph_y + graph_h + 4),
+            )
+
+            # Legend
+            legend_y = graph_y + graph_h + 22
+            legend_x = panel_x + 12
+            for name, (key, color) in zip(
+                ["Spd", "Siz", "Vis", "Eff", "Lif"], trait_keys,
+            ):
+                pygame.draw.rect(self.surface, color, (legend_x, legend_y + 2, 10, 10))
+                lbl = self.font_small.render(name, True, (140, 150, 170))
+                self.surface.blit(lbl, (legend_x + 14, legend_y))
+                legend_x += 58
+
+        # ── Stats Summary ──
+        summary_y = bar_y + 180 if len(generation_history) >= 2 else bar_y + 16
+        if alive:
+            avg_energy = sum(c.energy for c in alive) / len(alive)
+            avg_food = sum(c.food_eaten for c in alive) / len(alive)
+            total_food = sum(c.food_eaten for c in world.creatures)
+            stats = [
+                (f"Avg Energy: {avg_energy:.0f}", (180, 220, 180)),
+                (f"Avg Food:   {avg_food:.1f}", (140, 230, 140)),
+                (f"Total Food: {total_food}", (100, 200, 100)),
+                (f"Gen: {world.generation}", (140, 180, 255)),
+            ]
+            for text_str, color in stats:
+                txt = self.font_small.render(text_str, True, color)
+                self.surface.blit(txt, (panel_x + 12, summary_y))
+                summary_y += 18

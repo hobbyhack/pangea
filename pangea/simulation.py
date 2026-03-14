@@ -6,8 +6,10 @@ Initializes pygame, runs the menu, dispatches to the correct mode
 
 Controls:
     SPACE  → Pause / unpause
-    F      → Toggle fast-forward (skip rendering, run at max speed)
+    F      → Toggle fast-forward (multiple sim steps per frame)
+    +/-    → Adjust fast-forward speed multiplier (2×–20×)
     D      → Toggle debug overlay (vision ranges, energy bars)
+    E      → Toggle evolution panel (minimap, trait graphs)
     F11    → Toggle fullscreen
     1-6    → Select player tool (Isolation mode)
     ESC    → Pause menu
@@ -56,7 +58,10 @@ class Simulation:
         self.running = True
         self.paused = False
         self.fast_forward = False
+        self.fast_forward_multiplier = 5  # sim steps per frame in fast mode
         self.debug_mode = False
+        self.show_evolution_panel = False
+        self.generation_history: list[dict] = []
         self.settings = SimSettings()
         self.tools = PlayerTools()
 
@@ -115,6 +120,7 @@ class Simulation:
                 return
             elif result == "restart":
                 self.tools.reset()
+                self.generation_history.clear()
                 pop = self.settings.population_size
                 dna_list = [DNA.random() for _ in range(pop)]
                 world = self._create_world(dna_list)
@@ -129,6 +135,21 @@ class Simulation:
             fitnesses = [evaluate_fitness(c, self.settings) for c in world.creatures]
             best = max(fitnesses)
             avg = sum(fitnesses) / len(fitnesses) if fitnesses else 0
+
+            # Record generation history for evolution panel
+            all_creatures = world.creatures
+            alive = [c for c in all_creatures if c.alive]
+            n = len(alive) if alive else 1
+            self.generation_history.append({
+                "gen": generation,
+                "avg_speed": sum(c.dna.speed for c in all_creatures) / len(all_creatures),
+                "avg_size": sum(c.dna.size for c in all_creatures) / len(all_creatures),
+                "avg_vision": sum(c.dna.vision for c in all_creatures) / len(all_creatures),
+                "avg_efficiency": sum(c.dna.efficiency for c in all_creatures) / len(all_creatures),
+                "avg_lifespan": sum(c.dna.lifespan for c in all_creatures) / len(all_creatures),
+                "avg_food": sum(c.food_eaten for c in all_creatures) / len(all_creatures),
+                "alive_pct": len(alive) / len(all_creatures) * 100,
+            })
 
             self.renderer.draw_generation_stats(world, best, avg, mode="isolation")
             pygame.display.flip()
@@ -268,7 +289,7 @@ class Simulation:
         show_toolbar = mode == "isolation"
 
         while not world.is_generation_over():
-            dt = self.clock.tick(FPS if not self.fast_forward else 0) / 1000.0
+            dt = self.clock.tick(FPS) / 1000.0
             dt = min(dt, 0.05)
 
             # Handle events
@@ -284,8 +305,14 @@ class Simulation:
                         self.paused = not self.paused
                     elif event.key == pygame.K_f:
                         self.fast_forward = not self.fast_forward
+                    elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                        self.fast_forward_multiplier = min(20, self.fast_forward_multiplier + 1)
+                    elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                        self.fast_forward_multiplier = max(2, self.fast_forward_multiplier - 1)
                     elif event.key == pygame.K_d:
                         self.debug_mode = not self.debug_mode
+                    elif event.key == pygame.K_e:
+                        self.show_evolution_panel = not self.show_evolution_panel
                     elif event.key == pygame.K_ESCAPE:
                         pause_result, self.settings = self.menu.show_pause_menu(
                             mode, self.settings
@@ -327,28 +354,31 @@ class Simulation:
 
             # Update simulation (skip if paused)
             if not self.paused:
-                world.update(dt)
+                if self.fast_forward:
+                    # Run multiple simulation steps per frame for actual speedup
+                    for _ in range(self.fast_forward_multiplier):
+                        world.update(dt)
+                        if world.is_generation_over():
+                            break
+                else:
+                    world.update(dt)
 
-            # Render
-            if not self.fast_forward:
-                self.renderer.draw(
-                    world, mode, self.paused,
-                    tools=self.tools if mode == "isolation" else None,
-                    show_toolbar=show_toolbar,
+            # Render every frame to keep UI smooth
+            self.renderer.draw(
+                world, mode, self.paused,
+                tools=self.tools if mode == "isolation" else None,
+                show_toolbar=show_toolbar,
+                fast_forward=self.fast_forward_multiplier if self.fast_forward else 0,
+            )
+            if self.debug_mode:
+                self.renderer.draw_debug(world)
+            if self.show_evolution_panel:
+                self.renderer.draw_evolution_panel(
+                    world, mode, self.generation_history,
                 )
-                if self.debug_mode:
-                    self.renderer.draw_debug(world)
-                if mode == "isolation" and self.tools.active_tool != "none":
-                    self.renderer.draw_tool_cursor(self.tools)
-                pygame.display.flip()
-            else:
-                if int(world.elapsed_time * 10) % 5 == 0:
-                    self.renderer.draw(
-                        world, mode, self.paused,
-                        tools=self.tools if mode == "isolation" else None,
-                        show_toolbar=show_toolbar,
-                    )
-                    pygame.display.flip()
+            if mode == "isolation" and self.tools.active_tool != "none":
+                self.renderer.draw_tool_cursor(self.tools)
+            pygame.display.flip()
 
         return "done"
 
