@@ -180,7 +180,13 @@ class World:
         for _ in range(self.settings.predator_count):
             px = random.uniform(50, self.width - 50)
             py = random.uniform(50, self.height - 50)
-            self.predators.append(Predator(x=px, y=py))
+            self.predators.append(Predator(
+                x=px, y=py,
+                speed=self.settings.predator_speed,
+                vision=self.settings.predator_vision,
+                damage=self.settings.predator_damage,
+                radius=self.settings.predator_radius,
+            ))
 
         # Spawn initial food
         initial = self.settings.initial_food_count

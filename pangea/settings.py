@@ -66,6 +66,10 @@ class SimSettings:
 
     # ── Predators ──────────────────────────────────────────────
     predator_count: int = config.PREDATOR_COUNT
+    predator_speed: float = config.PREDATOR_SPEED
+    predator_vision: float = config.PREDATOR_VISION
+    predator_damage: float = config.PREDATOR_DAMAGE
+    predator_radius: float = config.PREDATOR_RADIUS
 
     def copy(self) -> SimSettings:
         """Create an independent copy of these settings."""
@@ -95,6 +99,10 @@ class SimSettings:
             night_vision_multiplier=self.night_vision_multiplier,
             hazard_count=self.hazard_count,
             predator_count=self.predator_count,
+            predator_speed=self.predator_speed,
+            predator_vision=self.predator_vision,
+            predator_damage=self.predator_damage,
+            predator_radius=self.predator_radius,
         )
 
 
@@ -139,7 +147,11 @@ SETTING_DEFS: list[SettingDef] = [
     SettingDef("day_night_cycle_length", "Day/Night Cycle (s)", 10, 300, 10, ".0f", "Environment"),
     SettingDef("night_vision_multiplier", "Night Vision", 0.0, 1.0, 0.05, ".2f", "Environment"),
     SettingDef("hazard_count", "Hazard Zones", 0, 10, 1, ".0f", "Environment"),
-    SettingDef("predator_count", "Predators", 0, 10, 1, ".0f", "Environment"),
+    SettingDef("predator_count", "Predators", 0, 10, 1, ".0f", "Predators"),
+    SettingDef("predator_speed", "Predator Speed", 0.5, 5.0, 0.5, ".1f", "Predators"),
+    SettingDef("predator_vision", "Predator Vision", 50, 400, 25, ".0f", "Predators"),
+    SettingDef("predator_damage", "Predator Damage", 1.0, 20.0, 1.0, ".1f", "Predators"),
+    SettingDef("predator_radius", "Predator Size", 4.0, 20.0, 1.0, ".0f", "Predators"),
     # Fitness
     SettingDef("fitness_food_weight", "Food Weight", 0.0, 50.0, 1.0, ".1f", "Fitness"),
     SettingDef("fitness_time_weight", "Survival Weight", 0.0, 5.0, 0.05, ".2f", "Fitness"),
