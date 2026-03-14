@@ -15,6 +15,7 @@ two parents' NN weights and traits before mutation.
 from __future__ import annotations
 
 import random
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -32,22 +33,32 @@ from pangea.config import (
 from pangea.creature import Creature
 from pangea.dna import DNA
 
+if TYPE_CHECKING:
+    from pangea.settings import SimSettings
+
 
 # ── Fitness ──────────────────────────────────────────────────
 
 
-def evaluate_fitness(creature: Creature) -> float:
+def evaluate_fitness(
+    creature: Creature,
+    settings: SimSettings | None = None,
+) -> float:
     """
     Calculate a creature's fitness score.
 
-    Fitness = (food_eaten * 10) + (survival_time * 0.1) + (remaining_energy * 0.05)
+    Fitness = (food_eaten * food_weight) + (survival_time * time_weight) + (remaining_energy * energy_weight)
 
     Food eaten is weighted most heavily because it's the primary survival skill.
+    Weights come from settings if provided, otherwise from config defaults.
     """
+    food_w = settings.fitness_food_weight if settings else FITNESS_FOOD_WEIGHT
+    time_w = settings.fitness_time_weight if settings else FITNESS_TIME_WEIGHT
+    energy_w = settings.fitness_energy_weight if settings else FITNESS_ENERGY_WEIGHT
     return (
-        creature.food_eaten * FITNESS_FOOD_WEIGHT
-        + creature.age * FITNESS_TIME_WEIGHT
-        + creature.energy * FITNESS_ENERGY_WEIGHT
+        creature.food_eaten * food_w
+        + creature.age * time_w
+        + creature.energy * energy_w
     )
 
 
@@ -57,6 +68,7 @@ def evaluate_fitness(creature: Creature) -> float:
 def select_top(
     creatures: list[Creature],
     n: int = TOP_PERFORMERS_COUNT,
+    settings: SimSettings | None = None,
 ) -> list[DNA]:
     """
     Select the top N creatures by fitness and return their DNA.
@@ -64,11 +76,12 @@ def select_top(
     Args:
         creatures: All creatures from the generation (alive or dead).
         n:         Number of top performers to keep.
+        settings:  Optional SimSettings for fitness weights.
 
     Returns:
         List of DNA from the top N creatures, sorted best-first.
     """
-    ranked = sorted(creatures, key=evaluate_fitness, reverse=True)
+    ranked = sorted(creatures, key=lambda c: evaluate_fitness(c, settings), reverse=True)
     return [c.dna for c in ranked[:n]]
 
 

@@ -49,6 +49,11 @@ class SimSettings:
     base_energy: float = config.BASE_ENERGY
     energy_cost_per_thrust: float = config.ENERGY_COST_PER_THRUST
 
+    # ── Fitness Weights ────────────────────────────────────────
+    fitness_food_weight: float = config.FITNESS_FOOD_WEIGHT
+    fitness_time_weight: float = config.FITNESS_TIME_WEIGHT
+    fitness_energy_weight: float = config.FITNESS_ENERGY_WEIGHT
+
     # ── Convergence ──────────────────────────────────────────
     convergence_max_generations: int = config.CONVERGENCE_MAX_GENERATIONS
 
@@ -82,6 +87,9 @@ class SimSettings:
             biome_count=self.biome_count,
             base_energy=self.base_energy,
             energy_cost_per_thrust=self.energy_cost_per_thrust,
+            fitness_food_weight=self.fitness_food_weight,
+            fitness_time_weight=self.fitness_time_weight,
+            fitness_energy_weight=self.fitness_energy_weight,
             convergence_max_generations=self.convergence_max_generations,
             day_night_cycle_length=self.day_night_cycle_length,
             night_vision_multiplier=self.night_vision_multiplier,
@@ -132,4 +140,8 @@ SETTING_DEFS: list[SettingDef] = [
     SettingDef("night_vision_multiplier", "Night Vision", 0.0, 1.0, 0.05, ".2f", "Environment"),
     SettingDef("hazard_count", "Hazard Zones", 0, 10, 1, ".0f", "Environment"),
     SettingDef("predator_count", "Predators", 0, 10, 1, ".0f", "Environment"),
+    # Fitness
+    SettingDef("fitness_food_weight", "Food Weight", 0.0, 50.0, 1.0, ".1f", "Fitness"),
+    SettingDef("fitness_time_weight", "Survival Weight", 0.0, 5.0, 0.05, ".2f", "Fitness"),
+    SettingDef("fitness_energy_weight", "Energy Weight", 0.0, 5.0, 0.05, ".2f", "Fitness"),
 ]

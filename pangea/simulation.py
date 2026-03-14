@@ -108,7 +108,7 @@ class Simulation:
             if result == "main_menu":
                 return
             elif result == "save_quit":
-                top_dna = select_top(world.creatures, self.settings.top_performers_count)
+                top_dna = select_top(world.creatures, self.settings.top_performers_count, self.settings)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filepath = f"species/species_{timestamp}.json"
                 save_species(top_dna, filepath, generation=generation)
@@ -124,9 +124,9 @@ class Simulation:
                 continue
 
             # Evolve to next generation
-            top_dna = select_top(world.creatures, self.settings.top_performers_count)
+            top_dna = select_top(world.creatures, self.settings.top_performers_count, self.settings)
 
-            fitnesses = [evaluate_fitness(c) for c in world.creatures]
+            fitnesses = [evaluate_fitness(c, self.settings) for c in world.creatures]
             best = max(fitnesses)
             avg = sum(fitnesses) / len(fitnesses) if fitnesses else 0
 
@@ -202,7 +202,7 @@ class Simulation:
             if b_alive:
                 b_survived_gens = generation
 
-            fitnesses = [evaluate_fitness(c) for c in world.creatures]
+            fitnesses = [evaluate_fitness(c, self.settings) for c in world.creatures]
             best = max(fitnesses) if fitnesses else 0
             avg = sum(fitnesses) / len(fitnesses) if fitnesses else 0
 
@@ -211,8 +211,8 @@ class Simulation:
             pygame.time.wait(1500)
 
             top_n = max(1, self.settings.top_performers_count // 2)
-            top_a = select_top(a_creatures, min(top_n, len(a_creatures)))
-            top_b = select_top(b_creatures, min(top_n, len(b_creatures)))
+            top_a = select_top(a_creatures, min(top_n, len(a_creatures)), self.settings)
+            top_b = select_top(b_creatures, min(top_n, len(b_creatures)), self.settings)
 
             if not top_a:
                 a_alive = False
