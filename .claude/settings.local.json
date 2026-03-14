@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /e/dev/pangea log --oneline)",
+      "Bash(xargs:*)",
+      "Bash(git -C /e/dev/pangea show HEAD --stat)",
+      "Bash(git -C /e/dev/pangea config --list)"
+    ]
+  }
+}
