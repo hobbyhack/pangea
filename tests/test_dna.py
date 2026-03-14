@@ -58,6 +58,7 @@ class TestDNA:
     def test_to_dict_from_dict_round_trip(self):
         """Serialization round trip should preserve all data."""
         original = self._make_dna(25, 20, 20, 20, 15)
+        original.diet = 1  # carnivore
         data = original.to_dict()
         restored = DNA.from_dict(data)
 
@@ -66,6 +67,7 @@ class TestDNA:
         assert restored.vision == original.vision
         assert restored.efficiency == original.efficiency
         assert restored.lifespan == original.lifespan
+        assert restored.diet == original.diet
 
         for orig_w, rest_w in zip(original.weights, restored.weights):
             np.testing.assert_array_almost_equal(orig_w, rest_w)
@@ -106,3 +108,26 @@ class TestDNA:
         del d["lifespan"]
         restored = DNA.from_dict(d)
         assert restored.lifespan == DEFAULT_LIFESPAN
+
+    def test_from_dict_diet_fallback(self):
+        """from_dict should default to herbivore when diet key is missing."""
+        from pangea.config import DIET_HERBIVORE
+        dna = self._make_dna()
+        d = dna.to_dict()
+        del d["diet"]
+        restored = DNA.from_dict(d)
+        assert restored.diet == DIET_HERBIVORE
+
+    def test_random_has_valid_diet(self):
+        """Random DNA should have a valid diet (0, 1, or 2)."""
+        for _ in range(50):
+            dna = DNA.random()
+            assert dna.diet in (0, 1, 2)
+
+    def test_to_dict_includes_diet(self):
+        """to_dict should include the diet field."""
+        dna = self._make_dna()
+        dna.diet = 2  # scavenger
+        d = dna.to_dict()
+        assert "diet" in d
+        assert d["diet"] == 2

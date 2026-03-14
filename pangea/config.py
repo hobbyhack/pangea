@@ -63,9 +63,10 @@ EFFICIENCY_BASE = 0.5        # Minimum efficiency multiplier
 EFFICIENCY_SCALE = 0.02      # 25 pts → efficiency 1.0 (neutral)
 
 # ── Neural Network ───────────────────────────────────────────
-NN_INPUT_SIZE = 9            # Inputs: food dist, food angle, wall dist, energy,
+NN_INPUT_SIZE = 10           # Inputs: food dist, food angle, wall dist, energy,
                              #         nearest creature dist, nearest creature angle,
-                             #         own speed, predator dist, predator angle
+                             #         own speed, predator dist, predator angle,
+                             #         under_attack
 NN_HIDDEN_SIZE = 8           # Hidden layer neurons
 NN_OUTPUT_SIZE = 2           # Outputs: turn angle, thrust
 
@@ -96,7 +97,24 @@ BIOME_SPEED_MULTIPLIERS = {  # Movement speed multipliers by biome type
     "normal": 1.0,
     "water": 0.5,
     "road": 1.5,
+    "forest": 0.7,
+    "desert": 1.3,
+    "swamp": 0.4,
+    "mountain": 0.3,
 }
+
+# Biome special effects
+BIOME_ENERGY_DRAIN = {       # Extra energy drain per second inside biome
+    "desert": 1.0,
+    "swamp": 0.5,
+}
+BIOME_FOOD_MULTIPLIER = {    # Food spawn rate multiplier inside biome
+    "forest": 2.0,
+}
+BIOME_PREDATOR_BLOCKED = {"mountain"}  # Predators cannot enter these biomes
+
+# ── Territory ──────────────────────────────────────────────
+TERRITORY_GRID_SIZE = 80           # Pixels per territory grid cell
 
 # ── Colors (RGB) ─────────────────────────────────────────────
 COLOR_BACKGROUND = (15, 15, 25)
@@ -121,3 +139,25 @@ COLOR_HAZARD_LAVA = (220, 80, 30)
 COLOR_HAZARD_COLD = (80, 150, 255)
 COLOR_BIOME_WATER = (30, 60, 120)   # Water biome tint color
 COLOR_BIOME_ROAD = (100, 90, 70)    # Road biome tint color
+COLOR_BIOME_FOREST = (20, 80, 30)   # Forest biome tint color
+COLOR_BIOME_DESERT = (140, 120, 50) # Desert biome tint color
+COLOR_BIOME_SWAMP = (50, 70, 40)    # Swamp biome tint color
+COLOR_BIOME_MOUNTAIN = (100, 100, 110)  # Mountain biome tint color
+
+# ── Creature Diets ─────────────────────────────────────────
+DIET_HERBIVORE = 0               # Eats plants, bonus food energy
+DIET_CARNIVORE = 1               # Attacks creatures, reduced plant food
+DIET_SCAVENGER = 2               # Normal food + energy from nearby deaths
+DIET_NAMES = {0: "herbivore", 1: "carnivore", 2: "scavenger"}
+
+HERBIVORE_FOOD_BONUS = 1.5      # Food energy multiplier for herbivores
+CARNIVORE_FOOD_PENALTY = 0.5    # Food energy multiplier for carnivores
+CARNIVORE_ATTACK_RANGE = 2.0    # Attack range as multiplier of own radius
+CARNIVORE_ATTACK_DAMAGE = 3.0   # Energy drained from victim per second
+CARNIVORE_ENERGY_STEAL = 0.5    # Fraction of damage converted to own energy
+SCAVENGER_DEATH_RADIUS = 80.0   # Range to detect nearby deaths
+SCAVENGER_DEATH_ENERGY = 15.0   # Energy gained per nearby death
+
+COLOR_HERBIVORE = (80, 200, 80)     # Green tint for herbivores
+COLOR_CARNIVORE = (200, 60, 60)     # Red tint for carnivores
+COLOR_SCAVENGER = (180, 140, 50)    # Yellow/brown tint for scavengers

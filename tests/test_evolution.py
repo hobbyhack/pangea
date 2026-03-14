@@ -165,7 +165,7 @@ class TestEvolution:
         """Crossover mode should produce correct population size."""
         top_dna = [DNA.random() for _ in range(5)]
         next_gen = create_next_generation(
-            top_dna, population_size=30, crossover=True,
+            top_dna, population_size=30, crossover_rate=1.0,
         )
         assert len(next_gen) == 30
         for dna in next_gen:
@@ -176,6 +176,6 @@ class TestEvolution:
         """Crossover with only 1 parent should fall back to clone-and-mutate."""
         top_dna = [DNA.random()]
         next_gen = create_next_generation(
-            top_dna, population_size=10, crossover=True,
+            top_dna, population_size=10, crossover_rate=1.0,
         )
         assert len(next_gen) == 10

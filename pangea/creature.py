@@ -14,6 +14,7 @@ Sensor inputs (all normalized):
     [6] Own speed                     -> 0.0 (stopped) to 1.0 (max speed)
     [7] Distance to nearest predator  -> 0.0 (touching) to 1.0 (at vision limit / none)
     [8] Angle to nearest predator     -> -1.0 (hard left) to 1.0 (hard right), 0 if none
+    [9] Under attack                  -> 0.0 (safe) to 1.0 (taking damage)
 
 Brain outputs:
     [0] Turn angle -> mapped to [-pi, pi]
@@ -27,7 +28,15 @@ import math
 import numpy as np
 
 from pangea.brain import NeuralNetwork
-from pangea.config import BASE_ENERGY, ENERGY_COST_PER_THRUST
+from pangea.config import (
+    BASE_ENERGY,
+    CARNIVORE_FOOD_PENALTY,
+    DIET_CARNIVORE,
+    DIET_HERBIVORE,
+    DIET_SCAVENGER,
+    ENERGY_COST_PER_THRUST,
+    HERBIVORE_FOOD_BONUS,
+)
 from pangea.dna import DNA
 
 
@@ -46,6 +55,9 @@ class Creature:
         self.age = 0.0  # seconds alive this generation
         self.alive = True
         self.lineage = lineage  # "" for isolation, "A" or "B" for convergence
+        self.last_turn = 0.0  # absolute radians turned last frame
+        self.under_attack = 0.0  # 0.0 = safe, 1.0 = taking damage this frame
+        self.territory_cells: set[tuple[int, int]] = set()  # visited grid cells
 
         # Build brain from DNA weights
         self.brain = NeuralNetwork()
@@ -115,7 +127,7 @@ class Creature:
         predators: list | None = None,
     ) -> np.ndarray:
         """
-        Compute the 9 normalized sensor inputs.
+        Compute the 10 normalized sensor inputs.
 
         Args:
             food_list:         List of food objects with .x, .y attributes.
@@ -127,7 +139,7 @@ class Creature:
             predators:         List of predators with .x, .y attributes.
 
         Returns:
-            numpy array of shape (9,) with sensor values.
+            numpy array of shape (10,) with sensor values.
         """
         vision = self.dna.effective_vision * vision_multiplier
 
@@ -181,6 +193,7 @@ class Creature:
             speed_normalized,
             pred_dist_normalized,
             pred_angle_normalized,
+            min(self.under_attack, 1.0),
         ])
 
     # ── Actions ──────────────────────────────────────────────
@@ -190,12 +203,13 @@ class Creature:
         Run the brain and apply its outputs to movement.
 
         Args:
-            inputs: Sensor array of shape (9,).
+            inputs: Sensor array of shape (10,).
         """
         outputs = self.brain.forward(inputs)
 
         # Output[0]: turn angle in [-pi, pi]
         turn = outputs[0] * math.pi
+        self.last_turn = abs(turn)
         self.heading += turn
         # Keep heading in [0, 2*pi]
         self.heading %= 2 * math.pi
@@ -251,7 +265,19 @@ class Creature:
 
     # ── Eating ───────────────────────────────────────────────
 
-    def eat(self, food_energy: float) -> None:
-        """Gain energy from eating food."""
+    def eat(self, food_energy: float, lifespan_heal: float = 0.0) -> None:
+        """Gain energy from eating food, scaled by diet type."""
+        if self.dna.diet == DIET_HERBIVORE:
+            food_energy *= HERBIVORE_FOOD_BONUS
+        elif self.dna.diet == DIET_CARNIVORE:
+            food_energy *= CARNIVORE_FOOD_PENALTY
+        # Scavengers eat at normal rate
+
         self.energy += food_energy
         self.food_eaten += 1
+        if lifespan_heal > 0:
+            self.age = max(0, self.age - lifespan_heal)
+
+    def gain_energy(self, amount: float) -> None:
+        """Gain energy from non-food sources (carnivore attacks, scavenger bonus)."""
+        self.energy += amount

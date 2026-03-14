@@ -15,15 +15,26 @@ import pygame
 from pangea.config import (
     BASE_ENERGY,
     COLOR_BACKGROUND,
+    COLOR_BIOME_DESERT,
+    COLOR_BIOME_FOREST,
+    COLOR_BIOME_MOUNTAIN,
     COLOR_BIOME_ROAD,
+    COLOR_BIOME_SWAMP,
     COLOR_BIOME_WATER,
+    COLOR_CARNIVORE,
     COLOR_FOOD,
     COLOR_HAZARD_COLD,
     COLOR_HAZARD_LAVA,
+    COLOR_HERBIVORE,
     COLOR_HUD_TEXT,
     COLOR_LINEAGE_A,
     COLOR_LINEAGE_B,
     COLOR_PREDATOR,
+    COLOR_SCAVENGER,
+    DIET_CARNIVORE,
+    DIET_HERBIVORE,
+    DIET_NAMES,
+    DIET_SCAVENGER,
 )
 import pangea.config as config
 from pangea.config import EVOLUTION_POINTS
@@ -272,16 +283,34 @@ class Renderer:
 
     # ── Biomes ────────────────────────────────────────────────
 
+    _BIOME_COLORS = {
+        "water": (COLOR_BIOME_WATER, 50),
+        "road": (COLOR_BIOME_ROAD, 40),
+        "forest": (COLOR_BIOME_FOREST, 55),
+        "desert": (COLOR_BIOME_DESERT, 45),
+        "swamp": (COLOR_BIOME_SWAMP, 50),
+        "mountain": (COLOR_BIOME_MOUNTAIN, 60),
+    }
+
+    _BIOME_LABELS = {
+        "water": "WATER",
+        "road": "ROAD",
+        "forest": "FOREST",
+        "desert": "DESERT",
+        "swamp": "SWAMP",
+        "mountain": "MTN",
+    }
+
     def _draw_biomes(self, world: World) -> None:
-        """Draw biome regions as semi-transparent filled circles."""
+        """Draw biome regions as semi-transparent filled circles with labels."""
         for biome in world.biomes:
             radius = int(biome.radius)
             cx, cy = int(biome.x), int(biome.y)
 
-            if biome.biome_type == "water":
-                color = (*COLOR_BIOME_WATER, 50)
-            else:  # road
-                color = (*COLOR_BIOME_ROAD, 40)
+            base_color, alpha = self._BIOME_COLORS.get(
+                biome.biome_type, (COLOR_BIOME_ROAD, 40)
+            )
+            color = (*base_color, alpha)
 
             biome_surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
             pygame.draw.circle(biome_surf, color, (radius, radius), radius)
@@ -289,6 +318,13 @@ class Renderer:
             border_color = (*color[:3], min(255, color[3] + 30))
             pygame.draw.circle(biome_surf, border_color, (radius, radius), radius, 2)
             self.surface.blit(biome_surf, (cx - radius, cy - radius))
+
+            # Biome label
+            label = self._BIOME_LABELS.get(biome.biome_type, biome.biome_type.upper())
+            label_color = tuple(min(255, c + 60) for c in base_color)
+            text = self.font_small.render(label, True, label_color)
+            text.set_alpha(100)
+            self.surface.blit(text, text.get_rect(center=(cx, cy)))
 
     # ── Food ─────────────────────────────────────────────────
 
@@ -509,25 +545,35 @@ class Renderer:
 
     def _creature_color(self, creature: Creature, mode: str) -> tuple[int, int, int]:
         """
-        Determine creature color based on mode.
+        Determine creature color based on mode and diet.
 
-        Isolation: rich color based on dominant trait and energy.
-        Convergence: team colors with energy brightness.
+        Isolation: blend of diet color + dominant trait, modulated by energy.
+        Convergence: team colors with diet tint.
         """
-        if mode == "convergence":
-            # Team color modulated by energy
-            base = COLOR_LINEAGE_A if creature.lineage == "A" else COLOR_LINEAGE_B
-            energy_ratio = max(0.3, min(1.0, creature.energy / BASE_ENERGY))
-            return tuple(int(c * energy_ratio) for c in base)
-
-        # Isolation: color based on dominant trait for visual diversity
-        dna = creature.dna
-        traits = [dna.speed, dna.size, dna.vision, dna.efficiency, dna.lifespan]
-        max_trait = max(traits)
-        trait_idx = traits.index(max_trait)
         energy_ratio = max(0.3, min(1.0, creature.energy / BASE_ENERGY))
 
-        # Each dominant trait gets a distinct hue
+        # Diet base tint
+        diet_colors = {
+            DIET_HERBIVORE: COLOR_HERBIVORE,
+            DIET_CARNIVORE: COLOR_CARNIVORE,
+            DIET_SCAVENGER: COLOR_SCAVENGER,
+        }
+        diet_color = diet_colors.get(creature.dna.diet, COLOR_HERBIVORE)
+
+        if mode == "convergence":
+            # Team color blended with diet tint
+            team = COLOR_LINEAGE_A if creature.lineage == "A" else COLOR_LINEAGE_B
+            blended = tuple(
+                int((team[i] * 0.6 + diet_color[i] * 0.4) * energy_ratio)
+                for i in range(3)
+            )
+            return blended
+
+        # Isolation: blend diet color with dominant-trait color
+        dna = creature.dna
+        traits = [dna.speed, dna.size, dna.vision, dna.efficiency, dna.lifespan]
+        trait_idx = traits.index(max(traits))
+
         trait_colors = [
             (80, 200, 255),   # Speed -> cyan
             (255, 140, 60),   # Size -> orange
@@ -535,15 +581,14 @@ class Renderer:
             (100, 255, 120),  # Efficiency -> green
             (220, 200, 60),   # Lifespan -> yellow/gold
         ]
-        base = trait_colors[trait_idx]
+        trait_color = trait_colors[trait_idx]
 
-        # Blend with secondary trait for more variety
-        secondary_idx = sorted(range(5), key=lambda i: traits[i], reverse=True)[1]
-        secondary = trait_colors[secondary_idx]
-        blend = 0.25
-        blended = tuple(int(base[i] * (1 - blend) + secondary[i] * blend) for i in range(3))
-
-        return tuple(int(c * energy_ratio) for c in blended)
+        # 50% diet, 50% trait
+        blended = tuple(
+            int((diet_color[i] * 0.5 + trait_color[i] * 0.5) * energy_ratio)
+            for i in range(3)
+        )
+        return blended
 
     # ── Event Tracking (for particles) ───────────────────────
 
@@ -1071,7 +1116,7 @@ class Renderer:
 
         # Stats panel — position near creature but keep on-screen
         panel_w = 200
-        panel_h = 190
+        panel_h = 210
         px = cx + ring_radius + 10
         py = cy - panel_h // 2
 
@@ -1110,6 +1155,9 @@ class Renderer:
             (f"Vision:     {dna.vision:3d}  ({dna.effective_vision:.0f} px)", (180, 100, 255)),
             (f"Efficiency: {dna.efficiency:3d}  (x{dna.effective_efficiency:.2f})", (100, 255, 120)),
             (f"Lifespan:   {dna.lifespan:3d}  ({age_max:.0f}s)", (220, 200, 60)),
+            (f"Diet:       {DIET_NAMES.get(dna.diet, 'unknown')}",
+             {DIET_HERBIVORE: COLOR_HERBIVORE, DIET_CARNIVORE: COLOR_CARNIVORE,
+              DIET_SCAVENGER: COLOR_SCAVENGER}.get(dna.diet, (200, 200, 200))),
         ]
 
         for text_str, color in stats_lines:

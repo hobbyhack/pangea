@@ -5,7 +5,17 @@ import math
 import numpy as np
 import pytest
 
-from pangea.config import BASE_ENERGY, NN_HIDDEN_SIZE, NN_INPUT_SIZE, NN_OUTPUT_SIZE
+from pangea.config import (
+    BASE_ENERGY,
+    CARNIVORE_FOOD_PENALTY,
+    DIET_CARNIVORE,
+    DIET_HERBIVORE,
+    DIET_SCAVENGER,
+    HERBIVORE_FOOD_BONUS,
+    NN_HIDDEN_SIZE,
+    NN_INPUT_SIZE,
+    NN_OUTPUT_SIZE,
+)
 from pangea.creature import Creature
 from pangea.dna import DNA
 from pangea.world import Food
@@ -34,11 +44,11 @@ class TestCreature:
         assert c.age == 0.0
 
     def test_sensor_output_shape(self):
-        """Sense should return array of shape (9,)."""
+        """Sense should return array of shape (10,)."""
         c = self._make_creature()
         food = [Food(x=150, y=100)]
         inputs = c.sense(food, 800, 600)
-        assert inputs.shape == (9,)
+        assert inputs.shape == (10,)
 
     def test_sensor_food_distance_normalized(self):
         """Food distance should be normalized between 0 and 1."""
@@ -116,10 +126,12 @@ class TestCreature:
 
     def test_eat_increases_energy_and_count(self):
         """Eating should increase energy and food_eaten counter."""
+        from pangea.config import HERBIVORE_FOOD_BONUS
         c = self._make_creature()
         c.energy = 50.0
         c.eat(30.0)
-        assert c.energy == 80.0
+        # Default diet is herbivore, gets bonus
+        assert c.energy == 50.0 + 30.0 * HERBIVORE_FOOD_BONUS
         assert c.food_eaten == 1
 
     def test_dead_creature_does_not_update(self):
@@ -138,6 +150,38 @@ class TestCreature:
         dna = DNA.random()
         c = Creature(dna, 100, 100, lineage="A")
         assert c.lineage == "A"
+
+    def test_herbivore_food_bonus(self):
+        """Herbivores should get bonus energy from food."""
+        c = self._make_creature()
+        c.dna.diet = DIET_HERBIVORE
+        c.energy = 50.0
+        c.eat(20.0)
+        assert c.energy == pytest.approx(50.0 + 20.0 * HERBIVORE_FOOD_BONUS)
+
+    def test_carnivore_food_penalty(self):
+        """Carnivores should get reduced energy from plant food."""
+        c = self._make_creature()
+        c.dna.diet = DIET_CARNIVORE
+        c.energy = 50.0
+        c.eat(20.0)
+        assert c.energy == pytest.approx(50.0 + 20.0 * CARNIVORE_FOOD_PENALTY)
+
+    def test_scavenger_normal_food(self):
+        """Scavengers should eat food at normal rate."""
+        c = self._make_creature()
+        c.dna.diet = DIET_SCAVENGER
+        c.energy = 50.0
+        c.eat(20.0)
+        assert c.energy == pytest.approx(70.0)
+
+    def test_gain_energy(self):
+        """gain_energy should add energy without food count."""
+        c = self._make_creature()
+        c.energy = 50.0
+        c.gain_energy(15.0)
+        assert c.energy == pytest.approx(65.0)
+        assert c.food_eaten == 0
 
     def test_speed_multiplier_affects_movement(self):
         """speed_multiplier should scale movement distance."""

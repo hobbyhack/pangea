@@ -205,6 +205,8 @@ class Menu:
         reset_btn = Button(config.WINDOW_WIDTH // 2 + 100, btn_y, 140, 45, "Reset",
                            color=(80, 45, 45), hover_color=(110, 60, 60))
 
+        hovered_tooltip = ""
+
         while True:
             mouse_pos = pygame.mouse.get_pos()
 
@@ -281,7 +283,8 @@ class Menu:
             scroll_clip = pygame.Rect(0, header_h, config.WINDOW_WIDTH, scroll_area_h)
             self.surface.set_clip(scroll_clip)
 
-            # Draw sliders
+            # Draw sliders and detect hover for tooltips
+            hovered_tooltip = ""
             last_cat = ""
             for s in sliders:
                 sdef = s["def"]
@@ -299,7 +302,12 @@ class Menu:
 
                 # Label
                 label = self.font_small.render(sdef.label, True, (180, 180, 200))
-                self.surface.blit(label, (panel_x + 140, draw_y + 2))
+                label_rect = label.get_rect(topleft=(panel_x + 140, draw_y + 2))
+                self.surface.blit(label, label_rect)
+
+                # Tooltip hover detection
+                if sdef.tooltip and label_rect.collidepoint(mouse_pos):
+                    hovered_tooltip = sdef.tooltip
 
                 sx = panel_x + panel_w - slider_w - 40
                 val = getattr(settings, sdef.key)
@@ -348,6 +356,10 @@ class Menu:
             back_btn.draw(self.surface, self.font)
             reset_btn.update(mouse_pos)
             reset_btn.draw(self.surface, self.font)
+
+            # Tooltip overlay (drawn last, on top of everything)
+            if hovered_tooltip:
+                self._draw_tooltip(mouse_pos, hovered_tooltip)
 
             pygame.display.flip()
             clock.tick(30)
@@ -620,6 +632,29 @@ class Menu:
             int(c1[1] + (c2[1] - c1[1]) * t),
             int(c1[2] + (c2[2] - c1[2]) * t),
         )
+
+    def _draw_tooltip(self, pos: tuple[int, int], text: str) -> None:
+        """Draw a tooltip box near the mouse cursor."""
+        pad_x, pad_y = 10, 6
+        tip_font = self.font_small
+        text_surf = tip_font.render(text, True, (230, 235, 245))
+        tw, th = text_surf.get_size()
+
+        box_w = tw + pad_x * 2
+        box_h = th + pad_y * 2
+
+        # Position: prefer below-right of cursor, clamp to screen
+        tx = pos[0] + 14
+        ty = pos[1] + 18
+        if tx + box_w > config.WINDOW_WIDTH - 4:
+            tx = pos[0] - box_w - 4
+        if ty + box_h > config.WINDOW_HEIGHT - 4:
+            ty = pos[1] - box_h - 4
+
+        bg_rect = pygame.Rect(tx, ty, box_w, box_h)
+        pygame.draw.rect(self.surface, (20, 22, 35), bg_rect, border_radius=5)
+        pygame.draw.rect(self.surface, (90, 100, 140), bg_rect, 1, border_radius=5)
+        self.surface.blit(text_surf, (tx + pad_x, ty + pad_y))
 
     def _draw_toggle(self, x: int, y: int, on: bool) -> None:
         """Draw a toggle switch widget."""

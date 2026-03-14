@@ -108,6 +108,11 @@ class Simulation:
         world.generation = generation
 
         while self.running:
+            # Check max generations limit
+            if (self.settings.max_generations > 0
+                    and generation > self.settings.max_generations):
+                return
+
             result = self._run_generation(world, mode="isolation")
 
             if result == "main_menu":
@@ -140,15 +145,19 @@ class Simulation:
             all_creatures = world.creatures
             alive = [c for c in all_creatures if c.alive]
             n = len(alive) if alive else 1
+            n_creatures = len(all_creatures)
             self.generation_history.append({
                 "gen": generation,
-                "avg_speed": sum(c.dna.speed for c in all_creatures) / len(all_creatures),
-                "avg_size": sum(c.dna.size for c in all_creatures) / len(all_creatures),
-                "avg_vision": sum(c.dna.vision for c in all_creatures) / len(all_creatures),
-                "avg_efficiency": sum(c.dna.efficiency for c in all_creatures) / len(all_creatures),
-                "avg_lifespan": sum(c.dna.lifespan for c in all_creatures) / len(all_creatures),
-                "avg_food": sum(c.food_eaten for c in all_creatures) / len(all_creatures),
-                "alive_pct": len(alive) / len(all_creatures) * 100,
+                "avg_speed": sum(c.dna.speed for c in all_creatures) / n_creatures,
+                "avg_size": sum(c.dna.size for c in all_creatures) / n_creatures,
+                "avg_vision": sum(c.dna.vision for c in all_creatures) / n_creatures,
+                "avg_efficiency": sum(c.dna.efficiency for c in all_creatures) / n_creatures,
+                "avg_lifespan": sum(c.dna.lifespan for c in all_creatures) / n_creatures,
+                "avg_food": sum(c.food_eaten for c in all_creatures) / n_creatures,
+                "alive_pct": len(alive) / n_creatures * 100,
+                "herbivores": sum(1 for c in all_creatures if c.dna.diet == 0),
+                "carnivores": sum(1 for c in all_creatures if c.dna.diet == 1),
+                "scavengers": sum(1 for c in all_creatures if c.dna.diet == 2),
             })
 
             self.renderer.draw_generation_stats(world, best, avg, mode="isolation")
@@ -163,7 +172,10 @@ class Simulation:
                 population_size=pop,
                 mutation_rate=self.settings.mutation_rate,
                 mutation_strength=self.settings.mutation_strength,
-                crossover=bool(self.settings.crossover_enabled),
+                crossover_rate=self.settings.crossover_rate,
+                min_parents=self.settings.min_population,
+                weight_clamp=self.settings.weight_clamp,
+                trait_mutation_range=self.settings.trait_mutation_range,
             )
             world = self._create_world(dna_list)
             world.generation = generation

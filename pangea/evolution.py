@@ -20,6 +20,9 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from pangea.config import (
+    DIET_CARNIVORE,
+    DIET_HERBIVORE,
+    DIET_SCAVENGER,
     EVOLUTION_POINTS,
     FITNESS_ENERGY_WEIGHT,
     FITNESS_FOOD_WEIGHT,
@@ -30,6 +33,8 @@ from pangea.config import (
     TOP_PERFORMERS_COUNT,
     TRAIT_MUTATION_RANGE,
 )
+
+DIET_MUTATION_RATE = 0.05  # 5% chance diet changes per offspring
 from pangea.creature import Creature
 from pangea.dna import DNA
 
@@ -47,7 +52,9 @@ def evaluate_fitness(
     """
     Calculate a creature's fitness score.
 
-    Fitness = (food_eaten * food_weight) + (survival_time * time_weight) + (remaining_energy * energy_weight)
+    Fitness = (food_eaten * food_weight) + (survival_time * time_weight)
+              + (remaining_energy * energy_weight)
+              + (territory_cells * territory_weight)
 
     Food eaten is weighted most heavily because it's the primary survival skill.
     Weights come from settings if provided, otherwise from config defaults.
@@ -55,10 +62,12 @@ def evaluate_fitness(
     food_w = settings.fitness_food_weight if settings else FITNESS_FOOD_WEIGHT
     time_w = settings.fitness_time_weight if settings else FITNESS_TIME_WEIGHT
     energy_w = settings.fitness_energy_weight if settings else FITNESS_ENERGY_WEIGHT
+    territory_w = settings.territory_fitness_weight if settings else 0.0
     return (
         creature.food_eaten * food_w
         + creature.age * time_w
         + creature.energy * energy_w
+        + len(creature.territory_cells) * territory_w
     )
 
 
@@ -92,16 +101,19 @@ def mutate_weights(
     weights: list[np.ndarray],
     rate: float = MUTATION_RATE,
     strength: float = MUTATION_STRENGTH,
+    weight_clamp: float = 0.0,
 ) -> list[np.ndarray]:
     """
     Mutate neural network weights with Gaussian noise.
 
     For each weight value, with probability `rate`, add noise ~ N(0, strength).
+    If weight_clamp > 0, all weights are clamped to [-clamp, +clamp].
 
     Args:
-        weights:  List of weight arrays [W1, b1, W2, b2].
-        rate:     Probability of mutating each individual weight.
-        strength: Standard deviation of the Gaussian noise.
+        weights:      List of weight arrays [W1, b1, W2, b2].
+        rate:         Probability of mutating each individual weight.
+        strength:     Standard deviation of the Gaussian noise.
+        weight_clamp: Max absolute weight value (0 = no clamping).
 
     Returns:
         New list of mutated weight arrays (originals are NOT modified).
@@ -114,26 +126,32 @@ def mutate_weights(
         # Add Gaussian noise where mask is True
         noise = np.random.randn(*w_copy.shape) * strength
         w_copy += mask * noise
+        if weight_clamp > 0:
+            np.clip(w_copy, -weight_clamp, weight_clamp, out=w_copy)
         mutated.append(w_copy)
     return mutated
 
 
-def mutate_traits(dna: DNA) -> tuple[int, int, int, int, int]:
+def mutate_traits(
+    dna: DNA,
+    mutation_range: int = TRAIT_MUTATION_RANGE,
+) -> tuple[int, int, int, int, int]:
     """
     Mutate physical trait allocations while preserving the budget.
 
-    Each trait gets a random delta in [-TRAIT_MUTATION_RANGE, +TRAIT_MUTATION_RANGE].
+    Each trait gets a random delta in [-mutation_range, +mutation_range].
     After applying deltas, traits are clamped to minimum 1 and rescaled to sum to
     EVOLUTION_POINTS.
 
     Args:
-        dna: The parent DNA to mutate traits from.
+        dna:            The parent DNA to mutate traits from.
+        mutation_range: Max +/- change per trait.
 
     Returns:
         Tuple of (speed, size, vision, efficiency, lifespan) after mutation.
     """
     traits = [dna.speed, dna.size, dna.vision, dna.efficiency, dna.lifespan]
-    r = TRAIT_MUTATION_RANGE
+    r = mutation_range
 
     # Apply random deltas
     traits = [t + random.randint(-r, r) for t in traits]
@@ -237,25 +255,30 @@ def create_next_generation(
     population_size: int = POPULATION_SIZE,
     mutation_rate: float = MUTATION_RATE,
     mutation_strength: float = MUTATION_STRENGTH,
-    crossover: bool = False,
+    crossover_rate: float = 0.0,
+    min_parents: int = 0,
+    weight_clamp: float = 0.0,
+    trait_mutation_range: int = TRAIT_MUTATION_RANGE,
 ) -> list[DNA]:
     """
     Create the next generation by cloning and mutating top performers.
 
-    Each top performer is cloned `population_size // len(top_dna)` times.
-    Any remainder slots are filled by cloning from the best performers.
-    Each clone has its weights and traits independently mutated.
+    Per offspring, with probability crossover_rate (if >= 2 parents),
+    two parents are blended via crossover; otherwise a single parent
+    is cloned.  Mutation is always applied on top.
 
-    When crossover=True and at least 2 parents are available, pairs of
-    parents are randomly selected, their weights and traits are blended
-    via crossover, then mutation is applied to the offspring.
+    If min_parents > 0 and fewer parents survived, random DNA is
+    injected to reach the minimum parent pool size.
 
     Args:
-        top_dna:           List of DNA from the top performers.
-        population_size:   Target population size for the new generation.
-        mutation_rate:      Probability of mutating each weight.
-        mutation_strength:  Standard deviation of the Gaussian noise.
-        crossover:         Whether to use sexual reproduction (crossover).
+        top_dna:              List of DNA from the top performers.
+        population_size:      Target population size for the new generation.
+        mutation_rate:        Probability of mutating each weight.
+        mutation_strength:    Standard deviation of the Gaussian noise.
+        crossover_rate:       Per-offspring probability of crossover (0-1).
+        min_parents:          Minimum parent pool size (pad with random DNA).
+        weight_clamp:         Max absolute weight value (0 = no clamp).
+        trait_mutation_range: Max +/- change per trait per generation.
 
     Returns:
         List of new mutated DNA objects.
@@ -264,65 +287,62 @@ def create_next_generation(
         # Extinction — start fresh with random DNA
         return [DNA.random() for _ in range(population_size)]
 
-    # Fall back to clone-and-mutate when crossover requested but only 1 parent
-    use_crossover = crossover and len(top_dna) >= 2
+    # Ensure minimum parent diversity
+    if min_parents > 0 and len(top_dna) < min_parents:
+        top_dna = list(top_dna)  # don't mutate caller's list
+        while len(top_dna) < min_parents:
+            top_dna.append(DNA.random())
+
+    can_crossover = crossover_rate > 0 and len(top_dna) >= 2
 
     new_generation: list[DNA] = []
 
-    if use_crossover:
-        for _ in range(population_size):
-            # Pick two distinct parents
+    for i in range(population_size):
+        if can_crossover and random.random() < crossover_rate:
+            # Crossover: blend two parents
             parent_a, parent_b = random.sample(top_dna, 2)
-
-            # Crossover weights and traits
-            child_weights = crossover_weights(parent_a.weights, parent_b.weights)
-            speed, size, vision, efficiency, lifespan = crossover_traits(parent_a, parent_b)
-
-            # Apply mutation on top of crossover
-            child_weights = mutate_weights(child_weights, mutation_rate, mutation_strength)
-
-            # Create child DNA
-            child_dna = DNA(
-                weights=child_weights,
-                speed=speed,
-                size=size,
-                vision=vision,
-                efficiency=efficiency,
-                lifespan=lifespan,
+            child_weights = crossover_weights(
+                parent_a.weights, parent_b.weights,
             )
-            # Mutate traits
-            speed, size, vision, efficiency, lifespan = mutate_traits(child_dna)
-            child_dna.speed = speed
-            child_dna.size = size
-            child_dna.vision = vision
-            child_dna.efficiency = efficiency
-            child_dna.lifespan = lifespan
+            speed, size, vision, efficiency, lifespan = crossover_traits(
+                parent_a, parent_b,
+            )
+            diet = random.choice([parent_a.diet, parent_b.diet])
+        else:
+            # Clone a single parent (distribute evenly)
+            parent = top_dna[i % len(top_dna)]
+            child_weights = [w.copy() for w in parent.weights]
+            speed = parent.speed
+            size = parent.size
+            vision = parent.vision
+            efficiency = parent.efficiency
+            lifespan = parent.lifespan
+            diet = parent.diet
 
-            new_generation.append(child_dna)
-    else:
-        clones_per_parent = population_size // len(top_dna)
-        remainder = population_size % len(top_dna)
+        # Mutate weights
+        child_weights = mutate_weights(
+            child_weights, mutation_rate, mutation_strength, weight_clamp,
+        )
 
-        for i, parent in enumerate(top_dna):
-            # How many clones for this parent
-            count = clones_per_parent + (1 if i < remainder else 0)
+        # Mutate diet (small chance to switch)
+        if random.random() < DIET_MUTATION_RATE:
+            diet = random.choice([DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER])
 
-            for _ in range(count):
-                # Mutate weights (using provided rate and strength)
-                new_weights = mutate_weights(parent.weights, mutation_rate, mutation_strength)
-                # Mutate traits
-                speed, size, vision, efficiency, lifespan = mutate_traits(parent)
-                # Create new DNA
-                new_generation.append(
-                    DNA(
-                        weights=new_weights,
-                        speed=speed,
-                        size=size,
-                        vision=vision,
-                        efficiency=efficiency,
-                        lifespan=lifespan,
-                    )
-                )
+        # Create child DNA and mutate traits
+        child_dna = DNA(
+            weights=child_weights,
+            speed=speed, size=size, vision=vision,
+            efficiency=efficiency, lifespan=lifespan,
+            diet=diet,
+        )
+        s, sz, v, e, lf = mutate_traits(child_dna, trait_mutation_range)
+        child_dna.speed = s
+        child_dna.size = sz
+        child_dna.vision = v
+        child_dna.efficiency = e
+        child_dna.lifespan = lf
+
+        new_generation.append(child_dna)
 
     return new_generation
 

@@ -20,6 +20,7 @@ import numpy as np
 
 from pangea.config import (
     DEFAULT_LIFESPAN,
+    DIET_HERBIVORE,
     EFFICIENCY_BASE,
     EFFICIENCY_SCALE,
     EVOLUTION_POINTS,
@@ -57,6 +58,7 @@ class DNA:
     vision: int
     efficiency: int
     lifespan: int
+    diet: int = DIET_HERBIVORE  # 0=herbivore, 1=carnivore, 2=scavenger
 
     # ── Trait Scaling ────────────────────────────────────────
 
@@ -115,6 +117,7 @@ class DNA:
             "vision": int(self.vision),
             "efficiency": int(self.efficiency),
             "lifespan": int(self.lifespan),
+            "diet": int(self.diet),
         }
 
     @classmethod
@@ -133,6 +136,7 @@ class DNA:
             vision=data["vision"],
             efficiency=data["efficiency"],
             lifespan=data.get("lifespan", DEFAULT_LIFESPAN),
+            diet=data.get("diet", DIET_HERBIVORE),
         )
 
     @classmethod
@@ -162,6 +166,10 @@ class DNA:
             np.zeros(NN_OUTPUT_SIZE),
         ]
 
+        import random as _rng
+        diet = _rng.choice([DIET_HERBIVORE, DIET_HERBIVORE, DIET_HERBIVORE,
+                            1, 2])  # 60% herbivore, 20% carnivore, 20% scavenger
+
         return cls(
             weights=weights,
             speed=traits[0],
@@ -169,4 +177,5 @@ class DNA:
             vision=traits[2],
             efficiency=traits[3],
             lifespan=traits[4],
+            diet=diet,
         )

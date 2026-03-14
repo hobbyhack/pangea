@@ -14,9 +14,17 @@ from dataclasses import dataclass
 
 import pangea.config as config
 from pangea.config import (
+    BIOME_ENERGY_DRAIN,
+    BIOME_FOOD_MULTIPLIER,
     BIOME_MAX_RADIUS,
     BIOME_MIN_RADIUS,
+    BIOME_PREDATOR_BLOCKED,
     BIOME_SPEED_MULTIPLIERS,
+    CARNIVORE_ATTACK_DAMAGE,
+    CARNIVORE_ATTACK_RANGE,
+    CARNIVORE_ENERGY_STEAL,
+    DIET_CARNIVORE,
+    DIET_SCAVENGER,
     FOOD_ENERGY,
     FOOD_RADIUS,
     HAZARD_DAMAGE,
@@ -26,7 +34,10 @@ from pangea.config import (
     PREDATOR_RADIUS,
     PREDATOR_SPEED,
     PREDATOR_VISION,
+    SCAVENGER_DEATH_ENERGY,
+    SCAVENGER_DEATH_RADIUS,
     SIZE_ARMOR_SCALE,
+    TERRITORY_GRID_SIZE,
 )
 from pangea.creature import Creature
 from pangea.settings import SimSettings
@@ -78,6 +89,7 @@ class Predator:
         vision: float = PREDATOR_VISION,
         damage: float = PREDATOR_DAMAGE,
         radius: float = PREDATOR_RADIUS,
+        stamina: float = 0.0,
     ) -> None:
         self.x = x
         self.y = y
@@ -86,6 +98,10 @@ class Predator:
         self.damage = damage
         self.radius = radius
         self.heading = random.uniform(0, 2 * math.pi)
+        self.stamina = stamina  # max chase seconds (0 = infinite)
+        self.chase_time = 0.0
+        self.rest_time = 0.0
+        self.resting = False
 
     def update(
         self,
@@ -108,17 +124,35 @@ class Predator:
                 nearest_dist = dist
                 target = creature
 
-        if target is not None:
+        if self.resting:
+            # Wander while resting
+            self.heading += random.gauss(0, 0.2)
+            self.rest_time += dt
+            # Recover after resting for half the stamina duration
+            if self.stamina > 0 and self.rest_time >= self.stamina * 0.5:
+                self.resting = False
+                self.rest_time = 0.0
+                self.chase_time = 0.0
+        elif target is not None:
             # Steer toward target
             desired = math.atan2(target.y - self.y, target.x - self.x)
             self.heading = desired
+            # Track chase fatigue
+            if self.stamina > 0:
+                self.chase_time += dt
+                if self.chase_time >= self.stamina:
+                    self.resting = True
         else:
             # Wander: slight random heading change
             self.heading += random.gauss(0, 0.2)
+            # Recover chase time when not chasing
+            if self.chase_time > 0:
+                self.chase_time = max(0, self.chase_time - dt * 0.5)
 
-        # Move
-        self.x += math.cos(self.heading) * self.speed * dt * 60
-        self.y += math.sin(self.heading) * self.speed * dt * 60
+        # Move (slower when resting)
+        move_speed = self.speed * (0.3 if self.resting else 1.0)
+        self.x += math.cos(self.heading) * move_speed * dt * 60
+        self.y += math.sin(self.heading) * move_speed * dt * 60
 
         # Clamp to bounds
         self.x = max(self.radius, min(width - self.radius, self.x))
@@ -179,15 +213,9 @@ class World:
         # Generate predators
         self.predators: list[Predator] = []
         for _ in range(self.settings.predator_count):
-            px = random.uniform(50, self.width - 50)
-            py = random.uniform(50, self.height - 50)
-            self.predators.append(Predator(
-                x=px, y=py,
-                speed=self.settings.predator_speed,
-                vision=self.settings.predator_vision,
-                damage=self.settings.predator_damage,
-                radius=self.settings.predator_radius,
-            ))
+            self.predators.append(self._spawn_predator())
+        self._predator_respawn_timer = 0.0
+        self._prev_alive_ids: set[int] = set()
 
         # Spawn initial food
         initial = self.settings.initial_food_count
@@ -221,7 +249,9 @@ class World:
         x = random.uniform(margin, self.width - margin)
         y = random.uniform(margin, self.height - margin)
         radius = random.uniform(BIOME_MIN_RADIUS, BIOME_MAX_RADIUS)
-        biome_type = random.choice(["water", "road"])
+        biome_type = random.choice(
+            ["water", "road", "forest", "desert", "swamp", "mountain"]
+        )
         speed_multiplier = BIOME_SPEED_MULTIPLIERS[biome_type]
         return Biome(
             x=x, y=y, radius=radius,
@@ -244,6 +274,46 @@ class World:
             if dist < biome.radius:
                 return biome.speed_multiplier
         return 1.0
+
+    def get_biome_at(self, x: float, y: float) -> Biome | None:
+        """Return the biome at a position, or None if outside all biomes."""
+        for biome in self.biomes:
+            dx = x - biome.x
+            dy = y - biome.y
+            if math.sqrt(dx * dx + dy * dy) < biome.radius:
+                return biome
+        return None
+
+    def is_in_biome_type(self, x: float, y: float, biome_type: str) -> bool:
+        """Check if a position is inside a biome of the given type."""
+        biome = self.get_biome_at(x, y)
+        return biome is not None and biome.biome_type == biome_type
+
+    # ── Biome Effects ─────────────────────────────────────────
+
+    def _apply_biome_effects(self, creature: Creature, dt: float) -> None:
+        """Apply special biome effects (energy drain) to a creature."""
+        biome = self.get_biome_at(creature.x, creature.y)
+        if biome is None:
+            return
+        drain = BIOME_ENERGY_DRAIN.get(biome.biome_type, 0.0)
+        if drain > 0:
+            creature.energy -= drain * dt * 60
+
+    # ── Predator Spawning ──────────────────────────────────────
+
+    def _spawn_predator(self) -> Predator:
+        """Create a predator at a random position with current settings."""
+        px = random.uniform(50, self.width - 50)
+        py = random.uniform(50, self.height - 50)
+        return Predator(
+            x=px, y=py,
+            speed=self.settings.predator_speed,
+            vision=self.settings.predator_vision,
+            damage=self.settings.predator_damage,
+            radius=self.settings.predator_radius,
+            stamina=self.settings.predator_stamina,
+        )
 
     # ── Food Spawning ────────────────────────────────────────
 
@@ -341,7 +411,7 @@ class World:
 
                 dist = math.sqrt(dx * dx + dy * dy)
                 if dist < cr + food.radius:
-                    creature.eat(food.energy)
+                    creature.eat(food.energy, self.settings.food_heal)
                     eaten_indices.append(i)
 
             for i in reversed(eaten_indices):
@@ -398,6 +468,42 @@ class World:
                     armor = creature.dna.effective_radius * SIZE_ARMOR_SCALE
                     damage = predator.damage * max(0.1, 1.0 - armor) * dt * 60
                     creature.energy -= damage
+                    creature.under_attack = 1.0
+
+    # ── Carnivore Combat ──────────────────────────────────────
+
+    def _check_carnivore_attacks(self, dt: float) -> None:
+        """Carnivores damage nearby creatures and steal energy."""
+        for attacker in self.creatures:
+            if not attacker.alive or attacker.dna.diet != DIET_CARNIVORE:
+                continue
+            attack_range = attacker.dna.effective_radius * CARNIVORE_ATTACK_RANGE
+            for victim in self.creatures:
+                if victim is attacker or not victim.alive:
+                    continue
+                dx = attacker.x - victim.x
+                dy = attacker.y - victim.y
+                dist = math.sqrt(dx * dx + dy * dy)
+                contact = attack_range + victim.dna.effective_radius
+                if dist < contact:
+                    damage = CARNIVORE_ATTACK_DAMAGE * dt * 60
+                    victim.energy -= damage
+                    victim.under_attack = 1.0
+                    attacker.gain_energy(damage * CARNIVORE_ENERGY_STEAL)
+
+    # ── Scavenger Death Detection ────────────────────────────
+
+    def _reward_scavengers(self, newly_dead: list[Creature]) -> None:
+        """Give energy to scavengers near recently dead creatures."""
+        for dead in newly_dead:
+            for creature in self.creatures:
+                if not creature.alive or creature.dna.diet != DIET_SCAVENGER:
+                    continue
+                dx = creature.x - dead.x
+                dy = creature.y - dead.y
+                dist = math.sqrt(dx * dx + dy * dy)
+                if dist < SCAVENGER_DEATH_RADIUS:
+                    creature.gain_energy(SCAVENGER_DEATH_ENERGY)
 
     # ── Player Tool Effects ──────────────────────────────────
 
@@ -449,6 +555,10 @@ class World:
         night_mult = self.settings.night_vision_multiplier
         vision_multiplier = night_mult + (1 - night_mult) * self.daylight_factor
 
+        # Reset under_attack flag for all creatures
+        for creature in self.creatures:
+            creature.under_attack = 0.0
+
         # Update each creature
         for creature in self.creatures:
             if not creature.alive:
@@ -471,19 +581,81 @@ class World:
             # Update physics (with biome speed multiplier)
             creature.update(dt, speed_multiplier=speed_mult)
 
+            # Turn cost — energy penalty proportional to turning
+            if self.settings.turn_cost > 0:
+                creature.energy -= (
+                    creature.last_turn * self.settings.turn_cost * dt * 60
+                )
+
+            # Territory tracking
+            if TERRITORY_GRID_SIZE > 0:
+                cell = (
+                    int(creature.x // TERRITORY_GRID_SIZE),
+                    int(creature.y // TERRITORY_GRID_SIZE),
+                )
+                creature.territory_cells.add(cell)
+
             # Apply player tool effects (zones, barriers)
             self.apply_tool_effects(creature, dt)
 
             # Apply hazard zone damage
             self._apply_hazard_effects(creature, dt)
 
+            # Apply biome special effects (desert/swamp energy drain)
+            self._apply_biome_effects(creature, dt)
+
             # Enforce boundaries
             self.enforce_boundaries(creature)
 
-        # Update predators
+        # Carnivore attacks
+        self._check_carnivore_attacks(dt)
+
+        # Update predators (blocked from mountain biomes)
         for predator in self.predators:
             predator.update(self.creatures, dt, self.width, self.height)
+            # Push predators out of blocked biomes
+            for biome in self.biomes:
+                if biome.biome_type in BIOME_PREDATOR_BLOCKED:
+                    dx = predator.x - biome.x
+                    dy = predator.y - biome.y
+                    dist = math.sqrt(dx * dx + dy * dy)
+                    if dist < biome.radius:
+                        # Push predator to edge of biome
+                        if dist > 0:
+                            nx, ny = dx / dist, dy / dist
+                        else:
+                            nx, ny = 1.0, 0.0
+                        predator.x = biome.x + nx * biome.radius
+                        predator.y = biome.y + ny * biome.radius
         self._check_predator_collisions(dt)
+
+        # Predator respawn
+        if self.settings.predator_respawn_interval > 0:
+            self._predator_respawn_timer += dt
+            if self._predator_respawn_timer >= self.settings.predator_respawn_interval:
+                self._predator_respawn_timer = 0.0
+                self.predators.append(self._spawn_predator())
+
+        # Reward scavengers near deaths
+        # Collect newly dead after all damage (predator + carnivore + hazard)
+        frame_dead = [
+            c for c in self.creatures
+            if not c.alive and id(c) not in self._prev_alive_ids
+        ]
+        self._reward_scavengers(frame_dead)
+        self._prev_alive_ids = {id(c) for c in self.creatures if not c.alive}
+
+        # Bonus food spawning in forest biomes
+        for biome in self.biomes:
+            food_mult = BIOME_FOOD_MULTIPLIER.get(biome.biome_type, 0.0)
+            if food_mult > 1.0 and random.random() < 0.02 * (food_mult - 1.0):
+                angle = random.uniform(0, 2 * math.pi)
+                dist = random.uniform(0, biome.radius * 0.8)
+                fx = biome.x + math.cos(angle) * dist
+                fy = biome.y + math.sin(angle) * dist
+                fx = max(FOOD_RADIUS, min(self.width - FOOD_RADIUS, fx))
+                fy = max(FOOD_RADIUS, min(self.height - FOOD_RADIUS, fy))
+                self.food.append(self._make_food(fx, fy))
 
         # Check for eating
         self.check_collisions()
@@ -492,9 +664,14 @@ class World:
 
     def is_generation_over(self) -> bool:
         """Check if the current generation has ended."""
-        all_dead = all(not c.alive for c in self.creatures)
+        alive = self.alive_count()
+        all_dead = alive == 0
         time_up = self.elapsed_time >= self.settings.generation_time_limit
-        return all_dead or time_up
+        threshold = self.settings.extinction_threshold
+        below_threshold = (
+            threshold > 0 and alive > 0 and alive <= threshold
+        )
+        return all_dead or time_up or below_threshold
 
     def alive_count(self) -> int:
         """Return the number of living creatures."""
