@@ -1,0 +1,24 @@
+[project]
+name = "pangea"
+version = "0.1.0"
+description = "Distributed Evolution Simulator"
+license = "MIT"
+authors = [{name = "Shane Gary"}]
+requires-python = ">=3.10"
+dependencies = [
+    "pygame>=2.5",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "coverage", "mypy", "ruff"]
+
+[project.scripts]
+pangea = "pangea.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["pangea*"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
