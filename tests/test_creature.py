@@ -1,0 +1,139 @@
+"""Tests for the Creature class."""
+
+import math
+
+import numpy as np
+import pytest
+
+from pangea.config import BASE_ENERGY, LIFESPAN_BASE, LIFESPAN_SCALE
+from pangea.creature import Creature
+from pangea.dna import DNA
+from pangea.world import Food
+
+
+class TestCreature:
+    def _make_creature(
+        self, x=100.0, y=100.0, speed=20, size=20, vision=20, efficiency=20, lifespan=20
+    ):
+        """Helper to create a creature with specified traits."""
+        weights = [
+            np.random.randn(4, 8) * 0.5,
+            np.zeros(8),
+            np.random.randn(8, 2) * 0.5,
+            np.zeros(2),
+        ]
+        dna = DNA(
+            weights=weights,
+            speed=speed,
+            size=size,
+            vision=vision,
+            efficiency=efficiency,
+            lifespan=lifespan,
+        )
+        return Creature(dna, x, y)
+
+    def test_initial_state(self):
+        """New creature should start alive with full energy."""
+        c = self._make_creature()
+        assert c.alive
+        assert c.energy == BASE_ENERGY
+        assert c.food_eaten == 0
+        assert c.age == 0.0
+
+    def test_sensor_output_shape(self):
+        """Sense should return array of shape (4,)."""
+        c = self._make_creature()
+        food = [Food(x=150, y=100)]
+        inputs = c.sense(food, 800, 600)
+        assert inputs.shape == (4,)
+
+    def test_sensor_food_distance_normalized(self):
+        """Food distance should be normalized between 0 and 1."""
+        c = self._make_creature(x=100, y=100, vision=50)
+        food = [Food(x=150, y=100)]
+        inputs = c.sense(food, 800, 600)
+        assert 0.0 <= inputs[0] <= 1.0
+
+    def test_sensor_no_food_visible(self):
+        """When no food is in range, food distance should be 1.0 and angle 0.0."""
+        c = self._make_creature(x=100, y=100, vision=1)
+        # Vision = 50 + 1*4 = 54 px, food is far away
+        food = [Food(x=500, y=500)]
+        inputs = c.sense(food, 800, 600)
+        assert inputs[0] == 1.0
+        assert inputs[1] == 0.0
+
+    def test_sensor_wall_distance_bounded(self):
+        """Wall distance should be between 0 and 1."""
+        c = self._make_creature(x=5, y=5)
+        inputs = c.sense([], 800, 600)
+        assert 0.0 <= inputs[2] <= 1.0
+
+    def test_sensor_energy_normalized(self):
+        """Energy sensor should be in [0, 1]."""
+        c = self._make_creature()
+        inputs = c.sense([], 800, 600)
+        assert inputs[3] == pytest.approx(1.0)
+
+        c.energy = BASE_ENERGY / 2
+        inputs = c.sense([], 800, 600)
+        assert inputs[3] == pytest.approx(0.5)
+
+    def test_energy_drains_on_update(self):
+        """Energy should decrease after update."""
+        c = self._make_creature()
+        c.speed = 1.0
+        initial_energy = c.energy
+        c.update(1 / 60)
+        assert c.energy < initial_energy
+
+    def test_creature_dies_at_zero_energy(self):
+        """Creature should die when energy reaches zero."""
+        c = self._make_creature()
+        c.energy = 0.01
+        c.speed = 10.0
+        c.update(1.0)
+        assert not c.alive
+        assert c.energy == 0
+
+    def test_creature_dies_at_lifespan(self):
+        """Creature should die when age exceeds effective lifespan."""
+        # Use minimal lifespan points to get a short effective lifespan
+        c = self._make_creature(lifespan=1)
+        effective = LIFESPAN_BASE + 1 * LIFESPAN_SCALE  # 10.0 + 0.5 = 10.5
+        # Give plenty of energy so it won't die from energy depletion
+        c.energy = 999999.0
+        c.speed = 0.0
+
+        # Advance age just below the lifespan — should still be alive
+        c.update(effective - 0.1)
+        assert c.alive
+
+        # Push age past the lifespan
+        c.update(0.2)
+        assert not c.alive
+
+    def test_eat_increases_energy_and_count(self):
+        """Eating should increase energy and food_eaten counter."""
+        c = self._make_creature()
+        c.energy = 50.0
+        c.eat(30.0)
+        assert c.energy == 80.0
+        assert c.food_eaten == 1
+
+    def test_dead_creature_does_not_update(self):
+        """Dead creatures should not move or lose energy."""
+        c = self._make_creature()
+        c.alive = False
+        c.energy = 50.0
+        pos_x, pos_y = c.x, c.y
+        c.update(1 / 60)
+        assert c.x == pos_x
+        assert c.y == pos_y
+        assert c.energy == 50.0
+
+    def test_lineage_attribute(self):
+        """Creature should store lineage correctly."""
+        dna = DNA.random()
+        c = Creature(dna, 100, 100, lineage="A")
+        assert c.lineage == "A"
