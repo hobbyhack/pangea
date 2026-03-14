@@ -12,6 +12,7 @@ import math
 import random
 from dataclasses import dataclass
 
+import pangea.config as config
 from pangea.config import (
     BIOME_MAX_RADIUS,
     BIOME_MIN_RADIUS,
@@ -25,8 +26,6 @@ from pangea.config import (
     PREDATOR_RADIUS,
     PREDATOR_SPEED,
     PREDATOR_VISION,
-    WINDOW_HEIGHT,
-    WINDOW_WIDTH,
 )
 from pangea.creature import Creature
 from pangea.settings import SimSettings
@@ -145,13 +144,13 @@ class World:
     def __init__(
         self,
         creatures: list[Creature],
-        width: float = WINDOW_WIDTH,
-        height: float = WINDOW_HEIGHT,
+        width: float | None = None,
+        height: float | None = None,
         settings: SimSettings | None = None,
         tools: PlayerTools | None = None,
     ) -> None:
-        self.width = width
-        self.height = height
+        self.width = width if width is not None else config.WINDOW_WIDTH
+        self.height = height if height is not None else config.WINDOW_HEIGHT
         self.creatures = creatures
         self.food: list[Food] = []
         self.elapsed_time = 0.0

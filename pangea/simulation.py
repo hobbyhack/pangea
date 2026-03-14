@@ -8,6 +8,7 @@ Controls:
     SPACE  → Pause / unpause
     F      → Toggle fast-forward (skip rendering, run at max speed)
     D      → Toggle debug overlay (vision ranges, energy bars)
+    F11    → Toggle fullscreen
     1-6    → Select player tool (Isolation mode)
     ESC    → Pause menu
     Left-click → Use active tool
@@ -20,13 +21,10 @@ from datetime import datetime
 
 import pygame
 
+import pangea.config as config
 from pangea.config import (
     CREATURES_PER_LINEAGE,
     FPS,
-    POPULATION_SIZE,
-    TOP_PERFORMERS_COUNT,
-    WINDOW_HEIGHT,
-    WINDOW_WIDTH,
 )
 from pangea.creature import Creature
 from pangea.dna import DNA
@@ -49,10 +47,11 @@ class Simulation:
     def __init__(self) -> None:
         pygame.init()
         pygame.display.set_caption("Pangea - Evolution Simulator")
-        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        self.fullscreen = False
+        self.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
         self.clock = pygame.time.Clock()
         self.renderer = Renderer(self.screen)
-        self.menu = Menu(self.screen)
+        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen)
 
         self.running = True
         self.paused = False
@@ -60,6 +59,21 @@ class Simulation:
         self.debug_mode = False
         self.settings = SimSettings()
         self.tools = PlayerTools()
+
+    def _toggle_fullscreen(self) -> None:
+        """Toggle between windowed and fullscreen mode."""
+        self.fullscreen = not self.fullscreen
+        if self.fullscreen:
+            self.screen = pygame.display.set_mode(
+                (0, 0), pygame.FULLSCREEN,
+            )
+        else:
+            self.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+        # Update config so all modules see the new dimensions
+        config.WINDOW_WIDTH = self.screen.get_width()
+        config.WINDOW_HEIGHT = self.screen.get_height()
+        self.renderer = Renderer(self.screen)
+        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen)
 
     # ── Main Entry Point ─────────────────────────────────────
 
@@ -218,12 +232,12 @@ class Simulation:
 
             all_creatures = []
             for dna in new_a:
-                x = random.uniform(50, WINDOW_WIDTH - 50)
-                y = random.uniform(50, WINDOW_HEIGHT - 50)
+                x = random.uniform(50, config.WINDOW_WIDTH - 50)
+                y = random.uniform(50, config.WINDOW_HEIGHT - 50)
                 all_creatures.append(Creature(dna, x, y, lineage="A"))
             for dna in new_b:
-                x = random.uniform(50, WINDOW_WIDTH - 50)
-                y = random.uniform(50, WINDOW_HEIGHT - 50)
+                x = random.uniform(50, config.WINDOW_WIDTH - 50)
+                y = random.uniform(50, config.WINDOW_HEIGHT - 50)
                 all_creatures.append(Creature(dna, x, y, lineage="B"))
 
             world = World(all_creatures, settings=self.settings)
@@ -264,7 +278,9 @@ class Simulation:
                     return "main_menu"
 
                 if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_SPACE:
+                    if event.key == pygame.K_F11:
+                        self._toggle_fullscreen()
+                    elif event.key == pygame.K_SPACE:
                         self.paused = not self.paused
                     elif event.key == pygame.K_f:
                         self.fast_forward = not self.fast_forward
@@ -289,7 +305,7 @@ class Simulation:
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         mx, my = event.pos
                         # Check if click is on toolbar area (top-right)
-                        toolbar_x = WINDOW_WIDTH - 380
+                        toolbar_x = config.WINDOW_WIDTH - 380
                         if my < 75 and mx > toolbar_x:
                             # Toolbar click — select tool
                             btn_w = 58
@@ -342,8 +358,8 @@ class Simulation:
         """Create a World with creatures from a list of DNA."""
         creatures = []
         for dna in dna_list:
-            x = random.uniform(50, WINDOW_WIDTH - 50)
-            y = random.uniform(50, WINDOW_HEIGHT - 50)
+            x = random.uniform(50, config.WINDOW_WIDTH - 50)
+            y = random.uniform(50, config.WINDOW_HEIGHT - 50)
             creatures.append(Creature(dna, x, y, lineage=lineage))
         return World(creatures, settings=self.settings, tools=self.tools)
 
@@ -354,25 +370,25 @@ class Simulation:
         creatures = []
 
         for dna in dna_a[:CREATURES_PER_LINEAGE]:
-            x = random.uniform(50, WINDOW_WIDTH - 50)
-            y = random.uniform(50, WINDOW_HEIGHT - 50)
+            x = random.uniform(50, config.WINDOW_WIDTH - 50)
+            y = random.uniform(50, config.WINDOW_HEIGHT - 50)
             creatures.append(Creature(dna, x, y, lineage="A"))
 
         for dna in dna_b[:CREATURES_PER_LINEAGE]:
-            x = random.uniform(50, WINDOW_WIDTH - 50)
-            y = random.uniform(50, WINDOW_HEIGHT - 50)
+            x = random.uniform(50, config.WINDOW_WIDTH - 50)
+            y = random.uniform(50, config.WINDOW_HEIGHT - 50)
             creatures.append(Creature(dna, x, y, lineage="B"))
 
         while len([c for c in creatures if c.lineage == "A"]) < CREATURES_PER_LINEAGE:
             src = random.choice([c for c in creatures if c.lineage == "A"])
-            x = random.uniform(50, WINDOW_WIDTH - 50)
-            y = random.uniform(50, WINDOW_HEIGHT - 50)
+            x = random.uniform(50, config.WINDOW_WIDTH - 50)
+            y = random.uniform(50, config.WINDOW_HEIGHT - 50)
             creatures.append(Creature(src.dna, x, y, lineage="A"))
 
         while len([c for c in creatures if c.lineage == "B"]) < CREATURES_PER_LINEAGE:
             src = random.choice([c for c in creatures if c.lineage == "B"])
-            x = random.uniform(50, WINDOW_WIDTH - 50)
-            y = random.uniform(50, WINDOW_HEIGHT - 50)
+            x = random.uniform(50, config.WINDOW_WIDTH - 50)
+            y = random.uniform(50, config.WINDOW_HEIGHT - 50)
             creatures.append(Creature(src.dna, x, y, lineage="B"))
 
         return World(creatures, settings=self.settings)

@@ -17,9 +17,8 @@ from pangea.config import (
     COLOR_BUTTON_TEXT,
     COLOR_HUD_TEXT,
     COLOR_MENU_BG,
-    WINDOW_HEIGHT,
-    WINDOW_WIDTH,
 )
+import pangea.config as config
 from pangea.settings import SETTING_DEFS, SimSettings
 
 
@@ -59,13 +58,29 @@ class Button:
 class Menu:
     """Main menu and sub-menus for the simulator."""
 
-    def __init__(self, surface: pygame.Surface) -> None:
+    def __init__(
+        self,
+        surface: pygame.Surface,
+        on_toggle_fullscreen: object = None,
+    ) -> None:
         self.surface = surface
         self.font = pygame.font.SysFont("consolas", 20)
         self.font_small = pygame.font.SysFont("consolas", 14)
         self.font_title = pygame.font.SysFont("consolas", 52, bold=True)
         self.font_subtitle = pygame.font.SysFont("consolas", 16)
         self.font_heading = pygame.font.SysFont("consolas", 18, bold=True)
+        self._on_toggle_fullscreen = on_toggle_fullscreen
+
+    def _handle_fullscreen(self, event: pygame.event.Event) -> bool:
+        """Check for F11 and invoke fullscreen callback. Returns True if handled."""
+        if (
+            event.type == pygame.KEYDOWN
+            and event.key == pygame.K_F11
+            and self._on_toggle_fullscreen is not None
+        ):
+            self._on_toggle_fullscreen()
+            return True
+        return False
 
     # ── Main Menu ────────────────────────────────────────────
 
@@ -79,7 +94,7 @@ class Menu:
         if settings is None:
             settings = SimSettings()
 
-        cx = WINDOW_WIDTH // 2
+        cx = config.WINDOW_WIDTH // 2
         btn_w, btn_h = 280, 50
 
         buttons = {
@@ -103,6 +118,8 @@ class Menu:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return ("quit", settings)
+                if self._handle_fullscreen(event):
+                    continue
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     return ("quit", settings)
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -145,6 +162,7 @@ class Menu:
     def show_settings(self, settings: SimSettings) -> SimSettings:
         """
         Show the in-app settings panel with sliders for all tunable parameters.
+        Supports mouse-wheel scrolling when content exceeds the window.
 
         Returns:
             Updated SimSettings object.
@@ -154,14 +172,16 @@ class Menu:
 
         # Layout constants
         panel_x = 200
-        panel_w = WINDOW_WIDTH - 400
+        panel_w = config.WINDOW_WIDTH - 400
         slider_w = 250
         slider_h = 8
         row_h = 36
+        header_h = 120  # fixed header area (title + hint)
+        footer_h = 80   # fixed footer area (buttons)
 
-        # Build slider data
+        # Build slider data with positions relative to content top (0)
         sliders: list[dict] = []
-        y = 140
+        y = 0
         last_category = ""
         for sdef in SETTING_DEFS:
             if sdef.category != last_category:
@@ -174,9 +194,15 @@ class Menu:
             })
             y += row_h
 
-        back_btn = Button(WINDOW_WIDTH // 2 - 80, y + 30, 160, 45, "Back",
+        content_height = y
+        scroll_area_h = config.WINDOW_HEIGHT - header_h - footer_h
+        max_scroll = max(0, content_height - scroll_area_h)
+        scroll_y = 0
+
+        btn_y = config.WINDOW_HEIGHT - footer_h + 15
+        back_btn = Button(config.WINDOW_WIDTH // 2 - 80, btn_y, 160, 45, "Back",
                           color=(50, 60, 80), hover_color=(70, 80, 110))
-        reset_btn = Button(WINDOW_WIDTH // 2 + 100, y + 30, 140, 45, "Reset",
+        reset_btn = Button(config.WINDOW_WIDTH // 2 + 100, btn_y, 140, 45, "Reset",
                            color=(80, 45, 45), hover_color=(110, 60, 60))
 
         while True:
@@ -189,6 +215,9 @@ class Menu:
                     if event.key == pygame.K_ESCAPE:
                         return settings
 
+                if event.type == pygame.MOUSEWHEEL:
+                    scroll_y = max(0, min(max_scroll, scroll_y - event.y * 30))
+
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if back_btn.is_clicked(mouse_pos):
                         return settings
@@ -199,16 +228,19 @@ class Menu:
                     # Check sliders / toggles
                     for s in sliders:
                         sdef = s["def"]
+                        draw_y = s["y"] - scroll_y + header_h
+                        if draw_y < header_h - 10 or draw_y > config.WINDOW_HEIGHT - footer_h:
+                            continue
                         if sdef.widget_type == "toggle":
                             toggle_rect = pygame.Rect(
-                                panel_x + panel_w - slider_w - 40, s["y"], 50, 24
+                                panel_x + panel_w - slider_w - 40, draw_y, 50, 24
                             )
                             if toggle_rect.collidepoint(mouse_pos):
                                 cur = getattr(settings, sdef.key)
                                 setattr(settings, sdef.key, not cur)
                         else:
                             slider_rect = pygame.Rect(
-                                panel_x + panel_w - slider_w - 40, s["y"], slider_w, slider_h + 16
+                                panel_x + panel_w - slider_w - 40, draw_y, slider_w, slider_h + 16
                             )
                             if slider_rect.collidepoint(mouse_pos):
                                 s["dragging"] = True
@@ -235,40 +267,49 @@ class Menu:
             # Draw
             self.surface.fill(COLOR_MENU_BG)
 
-            # Title
+            # Title (fixed header)
             title = self.font_heading.render("SIMULATION SETTINGS", True, (140, 160, 200))
-            self.surface.blit(title, title.get_rect(center=(WINDOW_WIDTH // 2, 80)))
+            self.surface.blit(title, title.get_rect(center=(config.WINDOW_WIDTH // 2, 80)))
 
             hint = self.font_small.render(
-                "Drag sliders to adjust. Changes apply to next generation.",
+                "Drag sliders to adjust. Scroll to see more. Changes apply next gen.",
                 True, (100, 100, 130),
             )
-            self.surface.blit(hint, hint.get_rect(center=(WINDOW_WIDTH // 2, 108)))
+            self.surface.blit(hint, hint.get_rect(center=(config.WINDOW_WIDTH // 2, 108)))
+
+            # Clip drawing to scroll area
+            scroll_clip = pygame.Rect(0, header_h, config.WINDOW_WIDTH, scroll_area_h)
+            self.surface.set_clip(scroll_clip)
 
             # Draw sliders
             last_cat = ""
             for s in sliders:
                 sdef = s["def"]
+                draw_y = s["y"] - scroll_y + header_h
+
+                # Skip off-screen items
+                if draw_y < header_h - row_h or draw_y > config.WINDOW_HEIGHT - footer_h + row_h:
+                    continue
 
                 # Category header
                 if sdef.category != last_cat:
                     last_cat = sdef.category
                     cat_text = self.font_heading.render(sdef.category, True, (100, 140, 200))
-                    self.surface.blit(cat_text, (panel_x, s["y"] - 6))
+                    self.surface.blit(cat_text, (panel_x, draw_y - 6))
 
                 # Label
                 label = self.font_small.render(sdef.label, True, (180, 180, 200))
-                self.surface.blit(label, (panel_x + 140, s["y"] + 2))
+                self.surface.blit(label, (panel_x + 140, draw_y + 2))
 
                 sx = panel_x + panel_w - slider_w - 40
                 val = getattr(settings, sdef.key)
 
                 if sdef.widget_type == "toggle":
                     # Draw toggle switch
-                    self._draw_toggle(sx, s["y"] + 4, bool(val))
+                    self._draw_toggle(sx, draw_y + 4, bool(val))
                 else:
                     # Slider track
-                    sy = s["y"] + 8
+                    sy = draw_y + 8
                     t = (val - sdef.min_val) / (sdef.max_val - sdef.min_val) if sdef.max_val > sdef.min_val else 0
 
                     # Track background
@@ -287,8 +328,22 @@ class Menu:
                     # Value text
                     val_str = f"{val:{sdef.fmt}}"
                     val_text = self.font_small.render(val_str, True, (160, 170, 190))
-                    self.surface.blit(val_text, (sx + slider_w + 10, s["y"] + 2))
+                    self.surface.blit(val_text, (sx + slider_w + 10, draw_y + 2))
 
+            # Remove clip
+            self.surface.set_clip(None)
+
+            # Scroll indicator
+            if max_scroll > 0:
+                bar_h = max(20, int(scroll_area_h * scroll_area_h / content_height))
+                bar_y = header_h + int((scroll_area_h - bar_h) * scroll_y / max_scroll)
+                bar_x = config.WINDOW_WIDTH - 14
+                pygame.draw.rect(self.surface, (50, 55, 70), (bar_x, header_h, 6, scroll_area_h), border_radius=3)
+                pygame.draw.rect(self.surface, (100, 110, 140), (bar_x, bar_y, 6, bar_h), border_radius=3)
+
+            # Footer buttons (fixed)
+            footer_bg = pygame.Rect(0, config.WINDOW_HEIGHT - footer_h, config.WINDOW_WIDTH, footer_h)
+            pygame.draw.rect(self.surface, COLOR_MENU_BG, footer_bg)
             back_btn.update(mouse_pos)
             back_btn.draw(self.surface, self.font)
             reset_btn.update(mouse_pos)
@@ -323,7 +378,7 @@ class Menu:
         scroll_offset = 0
         max_visible = 12
 
-        cx = WINDOW_WIDTH // 2
+        cx = config.WINDOW_WIDTH // 2
         clock = pygame.time.Clock()
 
         while True:
@@ -407,8 +462,8 @@ class Menu:
         Returns:
             Tuple of (action_string, updated_settings_or_None).
         """
-        cx = WINDOW_WIDTH // 2
-        cy = WINDOW_HEIGHT // 2
+        cx = config.WINDOW_WIDTH // 2
+        cy = config.WINDOW_HEIGHT // 2
         btn_w, btn_h = 220, 45
 
         options = ["resume", "restart", "main_menu"]
@@ -453,7 +508,7 @@ class Menu:
                                 continue
                             return (name, settings)
 
-            overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+            overlay = pygame.Surface((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 160))
             self.surface.blit(overlay, (0, 0))
 
@@ -478,7 +533,7 @@ class Menu:
         b_gens: int,
     ) -> None:
         """Show convergence mode results."""
-        cx = WINDOW_WIDTH // 2
+        cx = config.WINDOW_WIDTH // 2
         clock = pygame.time.Clock()
         frame = 0
 
@@ -530,13 +585,13 @@ class Menu:
 
         # Subtle animated gradient overlay
         import math
-        for y in range(0, WINDOW_HEIGHT, 4):
-            t = y / WINDOW_HEIGHT
+        for y in range(0, config.WINDOW_HEIGHT, 4):
+            t = y / config.WINDOW_HEIGHT
             wave = math.sin(frame * 0.02 + t * 3) * 0.5 + 0.5
             r = int(15 + wave * 8)
             g = int(15 + t * 10 + wave * 5)
             b = int(30 + t * 15 + wave * 10)
-            pygame.draw.line(self.surface, (r, g, b), (0, y), (WINDOW_WIDTH, y))
+            pygame.draw.line(self.surface, (r, g, b), (0, y), (config.WINDOW_WIDTH, y))
 
     def _pulse_color(
         self,
@@ -575,7 +630,7 @@ class Menu:
 
     def _show_message(self, *lines: str) -> None:
         """Show a simple message screen until ESC is pressed."""
-        cx = WINDOW_WIDTH // 2
+        cx = config.WINDOW_WIDTH // 2
         clock = pygame.time.Clock()
 
         while True:
@@ -586,7 +641,7 @@ class Menu:
                     return None
 
             self.surface.fill(COLOR_MENU_BG)
-            y = WINDOW_HEIGHT // 2 - len(lines) * 15
+            y = config.WINDOW_HEIGHT // 2 - len(lines) * 15
             for line in lines:
                 text = self.font.render(line, True, COLOR_HUD_TEXT)
                 self.surface.blit(text, text.get_rect(center=(cx, y)))

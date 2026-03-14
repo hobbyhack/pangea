@@ -24,9 +24,8 @@ from pangea.config import (
     COLOR_LINEAGE_A,
     COLOR_LINEAGE_B,
     COLOR_PREDATOR,
-    WINDOW_HEIGHT,
-    WINDOW_WIDTH,
 )
+import pangea.config as config
 from pangea.creature import Creature
 from pangea.tools import (
     TOOL_BARRIER,
@@ -610,13 +609,13 @@ class Renderer:
         # Controls hint at bottom
         controls = "SPACE=Pause  F=Fast  D=Debug  1-6=Tools  ESC=Menu"
         text = self.font_small.render(controls, True, (70, 70, 95))
-        self.surface.blit(text, (10, WINDOW_HEIGHT - 22))
+        self.surface.blit(text, (10, config.WINDOW_HEIGHT - 22))
 
     # ── Toolbar ──────────────────────────────────────────────
 
     def _draw_toolbar(self, tools: PlayerTools) -> None:
         """Draw the player tools toolbar at the top-right."""
-        toolbar_x = WINDOW_WIDTH - 380
+        toolbar_x = config.WINDOW_WIDTH - 380
         toolbar_y = 8
         btn_w = 58
         btn_h = 38
@@ -694,12 +693,12 @@ class Renderer:
 
     def _draw_pause_indicator(self) -> None:
         """Draw a translucent pause overlay."""
-        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay = pygame.Surface((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 100))
         self.surface.blit(overlay, (0, 0))
 
         text = self.font_large.render("PAUSED", True, (200, 210, 230))
-        rect = text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
+        rect = text.get_rect(center=(config.WINDOW_WIDTH // 2, config.WINDOW_HEIGHT // 2))
         self.surface.blit(text, rect)
 
     # ── Debug Overlay ────────────────────────────────────────
@@ -753,11 +752,11 @@ class Renderer:
         mode: str = "isolation",
     ) -> None:
         """Draw a generation summary overlay."""
-        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay = pygame.Surface((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 190))
         self.surface.blit(overlay, (0, 0))
 
-        cx, cy = WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2
+        cx, cy = config.WINDOW_WIDTH // 2, config.WINDOW_HEIGHT // 2
         lines = [
             (f"Generation {world.generation} Complete", (140, 180, 255), True),
             ("", (0, 0, 0), False),
