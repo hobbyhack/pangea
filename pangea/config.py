@@ -63,9 +63,9 @@ EFFICIENCY_BASE = 0.5        # Minimum efficiency multiplier
 EFFICIENCY_SCALE = 0.02      # 25 pts → efficiency 1.0 (neutral)
 
 # ── Neural Network ───────────────────────────────────────────
-NN_INPUT_SIZE = 7            # Inputs: food dist, food angle, wall dist, energy,
+NN_INPUT_SIZE = 9            # Inputs: food dist, food angle, wall dist, energy,
                              #         nearest creature dist, nearest creature angle,
-                             #         own speed
+                             #         own speed, predator dist, predator angle
 NN_HIDDEN_SIZE = 8           # Hidden layer neurons
 NN_OUTPUT_SIZE = 2           # Outputs: turn angle, thrust
 
@@ -115,6 +115,7 @@ PREDATOR_SPEED = 2.0             # Predator movement speed (px/frame)
 PREDATOR_VISION = 150.0          # How far predators can detect creatures (px)
 PREDATOR_DAMAGE = 5.0            # Energy drained per second on contact
 PREDATOR_RADIUS = 8.0            # Predator body radius in pixels
+SIZE_ARMOR_SCALE = 0.03          # Damage reduction per unit of effective_radius (3% per px)
 COLOR_PREDATOR = (255, 50, 50)   # Red color for predator rendering
 COLOR_HAZARD_LAVA = (220, 80, 30)
 COLOR_HAZARD_COLD = (80, 150, 255)

@@ -34,11 +34,11 @@ class TestCreature:
         assert c.age == 0.0
 
     def test_sensor_output_shape(self):
-        """Sense should return array of shape (7,)."""
+        """Sense should return array of shape (9,)."""
         c = self._make_creature()
         food = [Food(x=150, y=100)]
         inputs = c.sense(food, 800, 600)
-        assert inputs.shape == (7,)
+        assert inputs.shape == (9,)
 
     def test_sensor_food_distance_normalized(self):
         """Food distance should be normalized between 0 and 1."""

@@ -26,6 +26,7 @@ from pangea.config import (
     PREDATOR_RADIUS,
     PREDATOR_SPEED,
     PREDATOR_VISION,
+    SIZE_ARMOR_SCALE,
 )
 from pangea.creature import Creature
 from pangea.settings import SimSettings
@@ -381,7 +382,11 @@ class World:
     # ── Predator Collisions ──────────────────────────────────
 
     def _check_predator_collisions(self, dt: float) -> None:
-        """Drain energy from creatures that overlap with predators."""
+        """Drain energy from creatures that overlap with predators.
+
+        Larger creatures take reduced damage — effective_radius acts as armor,
+        reducing damage by SIZE_ARMOR_SCALE per pixel of radius.
+        """
         for predator in self.predators:
             for creature in self.creatures:
                 if not creature.alive:
@@ -390,7 +395,9 @@ class World:
                 dy = predator.y - creature.y
                 dist = math.sqrt(dx * dx + dy * dy)
                 if dist < predator.radius + creature.dna.effective_radius:
-                    creature.energy -= predator.damage * dt * 60
+                    armor = creature.dna.effective_radius * SIZE_ARMOR_SCALE
+                    damage = predator.damage * max(0.1, 1.0 - armor) * dt * 60
+                    creature.energy -= damage
 
     # ── Player Tool Effects ──────────────────────────────────
 
@@ -447,11 +454,12 @@ class World:
             if not creature.alive:
                 continue
 
-            # Sense the environment
+            # Sense the environment (including predators)
             inputs = creature.sense(
                 self.food, self.width, self.height, wrap,
                 vision_multiplier=vision_multiplier,
                 creatures=self.creatures,
+                predators=self.predators,
             )
 
             # Think and act

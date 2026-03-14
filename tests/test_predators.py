@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from pangea.config import NN_HIDDEN_SIZE, NN_INPUT_SIZE, NN_OUTPUT_SIZE, PREDATOR_DAMAGE
+from pangea.config import NN_HIDDEN_SIZE, NN_INPUT_SIZE, NN_OUTPUT_SIZE, PREDATOR_DAMAGE, SIZE_ARMOR_SCALE
 from pangea.creature import Creature
 from pangea.dna import DNA
 from pangea.settings import SimSettings
@@ -59,7 +59,8 @@ class TestPredators:
         dt = 1 / 60
         world._check_predator_collisions(dt)
 
-        expected_drain = PREDATOR_DAMAGE * dt * 60
+        armor = creature.dna.effective_radius * SIZE_ARMOR_SCALE
+        expected_drain = PREDATOR_DAMAGE * max(0.1, 1.0 - armor) * dt * 60
         assert creature.energy == pytest.approx(initial_energy - expected_drain)
 
     def test_predator_count_zero(self):
@@ -68,6 +69,51 @@ class TestPredators:
         creatures = [_make_creature()]
         world = World(creatures, settings=settings)
         assert len(world.predators) == 0
+
+    def test_creature_senses_predator(self):
+        """Creature should detect a nearby predator via sensors."""
+        creature = _make_creature(x=100.0, y=100.0)
+        predator = Predator(x=150.0, y=100.0)
+        inputs = creature.sense([], 800, 600, predators=[predator])
+        # Predator distance sensor (index 7) should be < 1.0
+        assert inputs[7] < 1.0
+        assert inputs.shape == (9,)
+
+    def test_no_predator_sensor_defaults(self):
+        """Without predators, predator sensors should be at defaults."""
+        creature = _make_creature(x=100.0, y=100.0)
+        inputs = creature.sense([], 800, 600, predators=[])
+        assert inputs[7] == 1.0  # no predator → max distance
+        assert inputs[8] == 0.0  # no predator → no angle
+
+    def test_size_armor_reduces_damage(self):
+        """Larger creatures should take less predator damage."""
+        # Small creature (size=5) vs large creature (size=60)
+        small = _make_creature(x=100.0, y=100.0, size=5, speed=35, vision=20,
+                               efficiency=20, lifespan=20)
+        large = _make_creature(x=100.0, y=100.0, size=60, speed=5, vision=15,
+                               efficiency=10, lifespan=10)
+
+        settings = SimSettings(predator_count=0)
+        world_s = World([small], settings=settings)
+        world_l = World([large], settings=settings)
+
+        pred_s = Predator(x=100.0, y=100.0)
+        pred_l = Predator(x=100.0, y=100.0)
+        world_s.predators.append(pred_s)
+        world_l.predators.append(pred_l)
+
+        dt = 1 / 60
+        energy_before = small.energy
+        world_s._check_predator_collisions(dt)
+        small_drain = energy_before - small.energy
+
+        energy_before = large.energy
+        world_l._check_predator_collisions(dt)
+        large_drain = energy_before - large.energy
+
+        # Large creature should take less damage
+        assert large_drain < small_drain
 
     def test_predator_wanders_without_prey(self):
         """Predator should still move when no creatures are nearby."""

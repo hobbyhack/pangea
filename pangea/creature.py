@@ -12,6 +12,8 @@ Sensor inputs (all normalized):
     [4] Distance to nearest creature  -> 0.0 (touching) to 1.0 (at vision limit / none)
     [5] Angle to nearest creature     -> -1.0 (hard left) to 1.0 (hard right), 0 if none
     [6] Own speed                     -> 0.0 (stopped) to 1.0 (max speed)
+    [7] Distance to nearest predator  -> 0.0 (touching) to 1.0 (at vision limit / none)
+    [8] Angle to nearest predator     -> -1.0 (hard left) to 1.0 (hard right), 0 if none
 
 Brain outputs:
     [0] Turn angle -> mapped to [-pi, pi]
@@ -110,9 +112,10 @@ class Creature:
         wrap: bool = False,
         vision_multiplier: float = 1.0,
         creatures: list | None = None,
+        predators: list | None = None,
     ) -> np.ndarray:
         """
-        Compute the 7 normalized sensor inputs.
+        Compute the 9 normalized sensor inputs.
 
         Args:
             food_list:         List of food objects with .x, .y attributes.
@@ -121,9 +124,10 @@ class Creature:
             wrap:              Whether the world wraps around.
             vision_multiplier: Scales effective vision (e.g. for day/night cycle).
             creatures:         List of all creatures for neighbor detection.
+            predators:         List of predators with .x, .y attributes.
 
         Returns:
-            numpy array of shape (7,) with sensor values.
+            numpy array of shape (9,) with sensor values.
         """
         vision = self.dna.effective_vision * vision_multiplier
 
@@ -158,6 +162,15 @@ class Creature:
         # ─ Own speed ─
         speed_normalized = min(self.speed / max(self.dna.max_speed, 0.01), 1.0)
 
+        # ─ Nearest predator ─
+        if predators is not None and len(predators) > 0:
+            pred_dist_normalized, pred_angle_normalized = self._find_nearest(
+                predators, vision, world_width, world_height, wrap,
+            )
+        else:
+            pred_dist_normalized = 1.0
+            pred_angle_normalized = 0.0
+
         return np.array([
             food_dist_normalized,
             food_angle_normalized,
@@ -166,6 +179,8 @@ class Creature:
             creature_dist_normalized,
             creature_angle_normalized,
             speed_normalized,
+            pred_dist_normalized,
+            pred_angle_normalized,
         ])
 
     # ── Actions ──────────────────────────────────────────────
@@ -175,7 +190,7 @@ class Creature:
         Run the brain and apply its outputs to movement.
 
         Args:
-            inputs: Sensor array of shape (7,).
+            inputs: Sensor array of shape (9,).
         """
         outputs = self.brain.forward(inputs)
 
