@@ -34,6 +34,8 @@ from pangea.config import (
     PREDATOR_RADIUS,
     PREDATOR_SPEED,
     PREDATOR_VISION,
+    CORPSE_ENERGY,
+    CORPSE_RADIUS,
     SCAVENGER_DEATH_ENERGY,
     SCAVENGER_DEATH_RADIUS,
     SIZE_ARMOR_SCALE,
@@ -54,6 +56,7 @@ class Food:
     radius: float = FOOD_RADIUS
     age: float = 0.0
     lifetime: float = 0.0  # 0 means no decay (set by World from settings)
+    is_corpse: bool = False  # True = scavenger-only corpse food
 
 
 @dataclass
@@ -399,7 +402,12 @@ class World:
             cr = creature.dna.effective_radius
             eaten_indices = []
 
+            is_scavenger = creature.dna.diet == DIET_SCAVENGER
             for i, food in enumerate(self.food):
+                # Only scavengers can eat corpses
+                if food.is_corpse and not is_scavenger:
+                    continue
+
                 dx = creature.x - food.x
                 dy = creature.y - food.y
 
@@ -494,8 +502,9 @@ class World:
     # ── Scavenger Death Detection ────────────────────────────
 
     def _reward_scavengers(self, newly_dead: list[Creature]) -> None:
-        """Give energy to scavengers near recently dead creatures."""
+        """Give energy to scavengers near recently dead creatures and spawn corpses."""
         for dead in newly_dead:
+            # Instant proximity bonus for scavengers already nearby
             for creature in self.creatures:
                 if not creature.alive or creature.dna.diet != DIET_SCAVENGER:
                     continue
@@ -504,6 +513,15 @@ class World:
                 dist = math.sqrt(dx * dx + dy * dy)
                 if dist < SCAVENGER_DEATH_RADIUS:
                     creature.gain_energy(SCAVENGER_DEATH_ENERGY)
+            # Spawn a corpse food item so scavengers can find it later
+            self.food.append(Food(
+                x=dead.x,
+                y=dead.y,
+                energy=CORPSE_ENERGY,
+                radius=CORPSE_RADIUS,
+                lifetime=self.settings.corpse_decay_time,
+                is_corpse=True,
+            ))
 
     # ── Player Tool Effects ──────────────────────────────────
 

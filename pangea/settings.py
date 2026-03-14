@@ -43,6 +43,7 @@ class SimSettings:
     initial_food_count: int = config.INITIAL_FOOD_COUNT
     world_wrap: bool = config.WORLD_WRAP
     food_decay_time: float = config.FOOD_DECAY_TIME
+    corpse_decay_time: float = config.CORPSE_DECAY_TIME
     food_cluster_size: int = config.FOOD_CLUSTER_SIZE
     season_length: float = config.SEASON_LENGTH
     season_min_rate: float = config.SEASON_MIN_RATE
@@ -102,6 +103,7 @@ class SimSettings:
             initial_food_count=self.initial_food_count,
             world_wrap=self.world_wrap,
             food_decay_time=self.food_decay_time,
+            corpse_decay_time=self.corpse_decay_time,
             food_cluster_size=self.food_cluster_size,
             season_length=self.season_length,
             season_min_rate=self.season_min_rate,
@@ -186,6 +188,8 @@ SETTING_DEFS: list[SettingDef] = [
                tooltip="Extra energy cost for turning (0 = turning is free)"),
     SettingDef("food_decay_time", "Food Decay (sec)", 5, 60, 5, ".0f", "Environment",
                tooltip="Seconds before an uneaten food item disappears"),
+    SettingDef("corpse_decay_time", "Corpse Decay (sec)", 3, 60, 1, ".0f", "Environment",
+               tooltip="Seconds before a dead creature's corpse disappears (scavenger food)"),
     SettingDef("food_cluster_size", "Cluster Size", 1, 10, 1, ".0f", "Environment",
                tooltip="Food spawns in clusters of this many items"),
     SettingDef("food_heal", "Food Heal (sec)", 0.0, 10.0, 0.5, ".1f", "Environment",

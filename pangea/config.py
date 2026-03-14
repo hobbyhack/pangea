@@ -157,6 +157,9 @@ CARNIVORE_ATTACK_DAMAGE = 3.0   # Energy drained from victim per second
 CARNIVORE_ENERGY_STEAL = 0.5    # Fraction of damage converted to own energy
 SCAVENGER_DEATH_RADIUS = 80.0   # Range to detect nearby deaths
 SCAVENGER_DEATH_ENERGY = 15.0   # Energy gained per nearby death
+CORPSE_ENERGY = 25.0            # Energy in a corpse food item
+CORPSE_DECAY_TIME = 10.0        # Seconds before a corpse disappears
+CORPSE_RADIUS = 5.0             # Radius of corpse food items
 
 COLOR_HERBIVORE = (80, 200, 80)     # Green tint for herbivores
 COLOR_CARNIVORE = (200, 60, 60)     # Red tint for carnivores

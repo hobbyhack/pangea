@@ -341,24 +341,35 @@ class Renderer:
             else:
                 freshness = 1.0
 
-            # Glow (reduce intensity for old food)
-            if freshness > 0.5:
-                self.surface.blit(glow, (fx - gw, fy - gw), special_flags=pygame.BLEND_ADD)
+            if food.is_corpse:
+                # Corpse: brown/tan color, no glow
+                core_color = (
+                    int(160 * freshness),
+                    int(110 * freshness),
+                    int(40 * freshness),
+                )
+                center_color = (
+                    int(200 * freshness),
+                    int(150 * freshness),
+                    int(60 * freshness),
+                )
+            else:
+                # Normal food: green with glow
+                if freshness > 0.5:
+                    self.surface.blit(glow, (fx - gw, fy - gw), special_flags=pygame.BLEND_ADD)
 
-            # Core — lerp from bright green toward dim green
-            core_color = (
-                int(60 * freshness),
-                int(220 * freshness),
-                int(60 * freshness),
-            )
+                core_color = (
+                    int(60 * freshness),
+                    int(220 * freshness),
+                    int(60 * freshness),
+                )
+                center_color = (
+                    int(140 * freshness),
+                    int(255 * freshness),
+                    int(140 * freshness),
+                )
+
             pygame.draw.circle(self.surface, core_color, (fx, fy), max(2, int(food.radius)))
-
-            # Bright center
-            center_color = (
-                int(140 * freshness),
-                int(255 * freshness),
-                int(140 * freshness),
-            )
             pygame.draw.circle(self.surface, center_color, (fx, fy), max(1, int(food.radius) - 1))
 
     # ── Zones ────────────────────────────────────────────────
@@ -1061,6 +1072,55 @@ class Renderer:
                 txt = self.font_small.render(text_str, True, color)
                 self.surface.blit(txt, (panel_x + 12, summary_y))
                 summary_y += 18
+
+        # ── Species Breakdown ──
+        species_y = summary_y + 10
+        species_label = self.font.render("Species", True, (180, 200, 230))
+        self.surface.blit(species_label, (panel_x + 12, species_y))
+        species_y += 24
+
+        all_alive = [c for c in world.creatures if c.alive]
+        total_alive = len(all_alive)
+
+        if mode == "convergence":
+            lineage_counts = {}
+            for c in all_alive:
+                lineage_counts[c.lineage] = lineage_counts.get(c.lineage, 0) + 1
+            species_items = [
+                ("Species A", lineage_counts.get("A", 0), config.COLOR_LINEAGE_A),
+                ("Species B", lineage_counts.get("B", 0), config.COLOR_LINEAGE_B),
+            ]
+        else:
+            diet_counts = {0: 0, 1: 0, 2: 0}
+            for c in all_alive:
+                diet_counts[c.dna.diet] = diet_counts.get(c.dna.diet, 0) + 1
+            species_items = [
+                ("Herbivore", diet_counts[0], config.COLOR_HERBIVORE),
+                ("Carnivore", diet_counts[1], config.COLOR_CARNIVORE),
+                ("Scavenger", diet_counts[2], config.COLOR_SCAVENGER),
+            ]
+
+        bar_w_full = panel_w - 24
+        for name, count, color in species_items:
+            # Label and count
+            pct = (count / total_alive * 100) if total_alive else 0
+            lbl = self.font_small.render(
+                f"{name}: {count} ({pct:.0f}%)", True, color,
+            )
+            self.surface.blit(lbl, (panel_x + 12, species_y))
+            species_y += 16
+            # Proportion bar
+            pygame.draw.rect(
+                self.surface, (30, 32, 45),
+                (panel_x + 12, species_y, bar_w_full, 8), border_radius=3,
+            )
+            fill = max(1, int(bar_w_full * count / total_alive)) if total_alive else 0
+            if fill > 0:
+                pygame.draw.rect(
+                    self.surface, color,
+                    (panel_x + 12, species_y, fill, 8), border_radius=3,
+                )
+            species_y += 14
 
     # ── Creature Inspection ──────────────────────────────────
 
