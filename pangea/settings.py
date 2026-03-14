@@ -30,12 +30,20 @@ class SimSettings:
     # ── Mutation ─────────────────────────────────────────────
     mutation_rate: float = config.MUTATION_RATE
     mutation_strength: float = config.MUTATION_STRENGTH
+    crossover_enabled: bool = False
 
     # ── World / Food ─────────────────────────────────────────
     food_spawn_rate: float = config.FOOD_SPAWN_RATE
     food_energy: float = config.FOOD_ENERGY
     initial_food_count: int = config.INITIAL_FOOD_COUNT
     world_wrap: bool = config.WORLD_WRAP
+    food_decay_time: float = config.FOOD_DECAY_TIME
+    food_cluster_size: int = config.FOOD_CLUSTER_SIZE
+    season_length: float = config.SEASON_LENGTH
+    season_min_rate: float = config.SEASON_MIN_RATE
+
+    # ── Biomes / Terrain ─────────────────────────────────────
+    biome_count: int = config.BIOME_COUNT
 
     # ── Creature Physics ─────────────────────────────────────
     base_energy: float = config.BASE_ENERGY
@@ -62,10 +70,16 @@ class SimSettings:
             top_performers_count=self.top_performers_count,
             mutation_rate=self.mutation_rate,
             mutation_strength=self.mutation_strength,
+            crossover_enabled=self.crossover_enabled,
             food_spawn_rate=self.food_spawn_rate,
             food_energy=self.food_energy,
             initial_food_count=self.initial_food_count,
             world_wrap=self.world_wrap,
+            food_decay_time=self.food_decay_time,
+            food_cluster_size=self.food_cluster_size,
+            season_length=self.season_length,
+            season_min_rate=self.season_min_rate,
+            biome_count=self.biome_count,
             base_energy=self.base_energy,
             energy_cost_per_thrust=self.energy_cost_per_thrust,
             convergence_max_generations=self.convergence_max_generations,
@@ -89,6 +103,7 @@ class SettingDef:
     step: float       # increment per click/drag
     fmt: str = ".1f"  # format string for display
     category: str = ""
+    widget_type: str = "slider"  # "slider" or "toggle"
 
 
 # Settings organized by category for the UI panel
@@ -100,12 +115,18 @@ SETTING_DEFS: list[SettingDef] = [
     # Mutation
     SettingDef("mutation_rate", "Mutation Rate", 0.01, 1.0, 0.05, ".2f", "Mutation"),
     SettingDef("mutation_strength", "Mutation Strength", 0.05, 2.0, 0.05, ".2f", "Mutation"),
+    SettingDef("crossover_enabled", "Crossover", 0, 1, 1, ".0f", "Mutation", widget_type="toggle"),
     # Environment
     SettingDef("food_spawn_rate", "Food Spawn Rate", 0.0, 5.0, 0.1, ".1f", "Environment"),
     SettingDef("food_energy", "Food Energy", 5, 100, 5, ".0f", "Environment"),
     SettingDef("initial_food_count", "Initial Food", 0, 100, 5, ".0f", "Environment"),
     SettingDef("base_energy", "Start Energy", 20, 500, 10, ".0f", "Environment"),
     SettingDef("energy_cost_per_thrust", "Move Cost", 0.01, 0.5, 0.01, ".2f", "Environment"),
+    SettingDef("food_decay_time", "Food Decay (sec)", 5, 60, 5, ".0f", "Environment"),
+    SettingDef("food_cluster_size", "Cluster Size", 1, 10, 1, ".0f", "Environment"),
+    SettingDef("season_length", "Season Length (s)", 10, 300, 10, ".0f", "Environment"),
+    SettingDef("season_min_rate", "Season Min Rate", 0.0, 1.0, 0.05, ".2f", "Environment"),
+    SettingDef("biome_count", "Biome Count", 0, 10, 1, ".0f", "Environment"),
     # Day/Night
     SettingDef("day_night_cycle_length", "Day/Night Cycle (s)", 10, 300, 10, ".0f", "Environment"),
     SettingDef("night_vision_multiplier", "Night Vision", 0.0, 1.0, 0.05, ".2f", "Environment"),

@@ -11,7 +11,7 @@ class TestNeuralNetwork:
     def test_forward_output_shape(self):
         """Forward pass should return array of shape (NN_OUTPUT_SIZE,)."""
         nn = NeuralNetwork()
-        inputs = np.array([0.5, 0.3, 0.8, 0.6])
+        inputs = np.zeros(NN_INPUT_SIZE)
         output = nn.forward(inputs)
         assert output.shape == (NN_OUTPUT_SIZE,)
 
@@ -43,7 +43,7 @@ class TestNeuralNetwork:
         np.testing.assert_array_equal(nn.W1, original_W1)
 
     def test_set_weights_round_trip(self):
-        """get_weights → set_weights should produce identical network."""
+        """get_weights -> set_weights should produce identical network."""
         nn1 = NeuralNetwork()
         weights = nn1.get_weights()
 
@@ -71,13 +71,13 @@ class TestNeuralNetwork:
         nn1 = NeuralNetwork()
         nn2 = nn1.copy()
 
-        inputs = np.array([0.5, -0.3, 0.8, 0.1])
+        inputs = np.random.randn(NN_INPUT_SIZE)
         np.testing.assert_array_equal(nn1.forward(inputs), nn2.forward(inputs))
 
     def test_deterministic_forward(self):
         """Same input should always produce same output."""
         nn = NeuralNetwork()
-        inputs = np.array([0.1, 0.2, 0.3, 0.4])
+        inputs = np.random.randn(NN_INPUT_SIZE)
         out1 = nn.forward(inputs)
         out2 = nn.forward(inputs)
         np.testing.assert_array_equal(out1, out2)

@@ -32,7 +32,7 @@ class TestSaveLoad:
             assert "generation" in data
 
     def test_round_trip_preserves_data(self):
-        """Save → load should preserve all DNA data."""
+        """Save -> load should preserve all DNA data."""
         with tempfile.TemporaryDirectory() as tmpdir:
             filepath = os.path.join(tmpdir, "roundtrip.json")
             original = [DNA.random() for _ in range(3)]
@@ -49,6 +49,7 @@ class TestSaveLoad:
                 assert orig.size == rest.size
                 assert orig.vision == rest.vision
                 assert orig.efficiency == rest.efficiency
+                assert orig.lifespan == rest.lifespan
                 for ow, rw in zip(orig.weights, rest.weights):
                     np.testing.assert_array_almost_equal(ow, rw)
 

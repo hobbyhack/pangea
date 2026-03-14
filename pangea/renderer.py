@@ -1,7 +1,7 @@
 """
 Renderer — all pygame drawing logic with rich visuals.
 ============================================================
-Draws the world, creatures, food, zones, barriers, toolbar,
+Draws the world, creatures, food, biomes, zones, barriers, toolbar,
 HUD overlay, particles, and glow effects.
 """
 
@@ -15,6 +15,8 @@ import pygame
 from pangea.config import (
     BASE_ENERGY,
     COLOR_BACKGROUND,
+    COLOR_BIOME_ROAD,
+    COLOR_BIOME_WATER,
     COLOR_FOOD,
     COLOR_HAZARD_COLD,
     COLOR_HAZARD_LAVA,
@@ -180,6 +182,9 @@ class Renderer:
         # Background with subtle gradient
         self._draw_background()
 
+        # Biomes (under everything else)
+        self._draw_biomes(world)
+
         # Zones (under everything)
         if tools:
             self._draw_zones(tools)
@@ -257,20 +262,60 @@ class Renderer:
         """Draw a flat dark background."""
         self.surface.fill(COLOR_BACKGROUND)
 
+    # ── Biomes ────────────────────────────────────────────────
+
+    def _draw_biomes(self, world: World) -> None:
+        """Draw biome regions as semi-transparent filled circles."""
+        for biome in world.biomes:
+            radius = int(biome.radius)
+            cx, cy = int(biome.x), int(biome.y)
+
+            if biome.biome_type == "water":
+                color = (*COLOR_BIOME_WATER, 50)
+            else:  # road
+                color = (*COLOR_BIOME_ROAD, 40)
+
+            biome_surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(biome_surf, color, (radius, radius), radius)
+            # Subtle border
+            border_color = (*color[:3], min(255, color[3] + 30))
+            pygame.draw.circle(biome_surf, border_color, (radius, radius), radius, 2)
+            self.surface.blit(biome_surf, (cx - radius, cy - radius))
+
     # ── Food ─────────────────────────────────────────────────
 
     def _draw_food(self, world: World) -> None:
-        """Draw food items with a soft glow."""
+        """Draw food items with a soft glow, fading as they age."""
         glow = self._food_glow
         gw = glow.get_width() // 2
         for food in world.food:
             fx, fy = int(food.x), int(food.y)
-            # Glow
-            self.surface.blit(glow, (fx - gw, fy - gw), special_flags=pygame.BLEND_ADD)
-            # Core
-            pygame.draw.circle(self.surface, (60, 220, 60), (fx, fy), max(2, int(food.radius)))
+
+            # Compute fade factor: 1.0 = fresh, dims toward 0.3 as food expires
+            if food.lifetime > 0:
+                freshness = max(0.3, 1.0 - food.age / food.lifetime * 0.7)
+            else:
+                freshness = 1.0
+
+            # Glow (reduce intensity for old food)
+            if freshness > 0.5:
+                self.surface.blit(glow, (fx - gw, fy - gw), special_flags=pygame.BLEND_ADD)
+
+            # Core — lerp from bright green toward dim green
+            core_color = (
+                int(60 * freshness),
+                int(220 * freshness),
+                int(60 * freshness),
+            )
+            pygame.draw.circle(self.surface, core_color, (fx, fy), max(2, int(food.radius)))
+
             # Bright center
-            pygame.draw.circle(self.surface, (140, 255, 140), (fx, fy), max(1, int(food.radius) - 1))
+            center_color = (
+                int(140 * freshness),
+                int(255 * freshness),
+                int(140 * freshness),
+            )
+            pygame.draw.circle(self.surface, center_color, (fx, fy), max(1, int(food.radius) - 1))
 
     # ── Zones ────────────────────────────────────────────────
 
@@ -469,22 +514,23 @@ class Renderer:
 
         # Isolation: color based on dominant trait for visual diversity
         dna = creature.dna
-        traits = [dna.speed, dna.size, dna.vision, dna.efficiency]
+        traits = [dna.speed, dna.size, dna.vision, dna.efficiency, dna.lifespan]
         max_trait = max(traits)
         trait_idx = traits.index(max_trait)
         energy_ratio = max(0.3, min(1.0, creature.energy / BASE_ENERGY))
 
         # Each dominant trait gets a distinct hue
         trait_colors = [
-            (80, 200, 255),   # Speed → cyan
-            (255, 140, 60),   # Size → orange
-            (180, 100, 255),  # Vision → purple
-            (100, 255, 120),  # Efficiency → green
+            (80, 200, 255),   # Speed -> cyan
+            (255, 140, 60),   # Size -> orange
+            (180, 100, 255),  # Vision -> purple
+            (100, 255, 120),  # Efficiency -> green
+            (220, 200, 60),   # Lifespan -> yellow/gold
         ]
         base = trait_colors[trait_idx]
 
         # Blend with secondary trait for more variety
-        secondary_idx = sorted(range(4), key=lambda i: traits[i], reverse=True)[1]
+        secondary_idx = sorted(range(5), key=lambda i: traits[i], reverse=True)[1]
         secondary = trait_colors[secondary_idx]
         blend = 0.25
         blended = tuple(int(base[i] * (1 - blend) + secondary[i] * blend) for i in range(3))
@@ -516,8 +562,8 @@ class Renderer:
     def _draw_hud(self, world: World, mode: str, tools: PlayerTools | None = None) -> None:
         """Draw the heads-up display with generation info."""
         # Semi-transparent HUD background
-        hud_h = 130 if mode == "isolation" else 180
-        hud_surf = pygame.Surface((220, hud_h), pygame.SRCALPHA)
+        hud_h = 150 if mode == "isolation" else 200
+        hud_surf = pygame.Surface((260, hud_h), pygame.SRCALPHA)
         hud_surf.fill((10, 10, 20, 160))
         self.surface.blit(hud_surf, (5, 5))
 
@@ -532,6 +578,19 @@ class Renderer:
 
         if tools and tools.drought_active:
             lines.append(("DROUGHT ACTIVE", (255, 200, 50)))
+
+        # Seasonal indicator
+        season_mult = world.seasonal_multiplier()
+        if season_mult >= 0.8:
+            season_label = "Abundant"
+            season_color = (100, 255, 130)
+        elif season_mult >= 0.5:
+            season_label = "Normal"
+            season_color = (180, 200, 180)
+        else:
+            season_label = "Scarce"
+            season_color = (255, 160, 80)
+        lines.append((f"Season: {season_label} ({season_mult:.0%})", season_color))
 
         if mode == "convergence":
             lines.append(("", (0, 0, 0)))
@@ -598,7 +657,7 @@ class Renderer:
         # Active tool description
         desc = TOOL_DESCRIPTIONS.get(tools.active_tool, "")
         if tools.drought_active:
-            desc = "Drought ON — no natural food spawning"
+            desc = "Drought ON -- no natural food spawning"
         desc_text = self.font_small.render(desc, True, (120, 130, 160))
         self.surface.blit(desc_text, (toolbar_x, toolbar_y + btn_h + 6))
 
@@ -680,7 +739,7 @@ class Renderer:
 
             # Trait info
             dna = creature.dna
-            info = f"S{dna.speed} Z{dna.size} V{dna.vision} E{dna.efficiency}"
+            info = f"S{dna.speed} Z{dna.size} V{dna.vision} E{dna.efficiency} L{dna.lifespan}"
             info_text = self.font_small.render(info, True, (120, 130, 160))
             self.surface.blit(info_text, (cx - info_text.get_width() // 2, by - 16))
 

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from pangea.config import BASE_ENERGY, HAZARD_DAMAGE
+from pangea.config import BASE_ENERGY, NN_HIDDEN_SIZE, NN_INPUT_SIZE, NN_OUTPUT_SIZE
 from pangea.creature import Creature
 from pangea.dna import DNA
 from pangea.settings import SimSettings
@@ -13,12 +13,12 @@ from pangea.world import Hazard, World
 def _make_creature(x: float = 100.0, y: float = 100.0) -> Creature:
     """Helper to create a creature at a given position."""
     weights = [
-        np.zeros((4, 8)),
-        np.zeros(8),
-        np.zeros((8, 2)),
-        np.zeros(2),
+        np.zeros((NN_INPUT_SIZE, NN_HIDDEN_SIZE)),
+        np.zeros(NN_HIDDEN_SIZE),
+        np.zeros((NN_HIDDEN_SIZE, NN_OUTPUT_SIZE)),
+        np.zeros(NN_OUTPUT_SIZE),
     ]
-    dna = DNA(weights=weights, speed=25, size=25, vision=25, efficiency=25)
+    dna = DNA(weights=weights, speed=20, size=20, vision=20, efficiency=20, lifespan=20)
     return Creature(dna, x, y)
 
 

@@ -5,21 +5,23 @@ import math
 import numpy as np
 import pytest
 
+from pangea.config import NN_HIDDEN_SIZE, NN_INPUT_SIZE, NN_OUTPUT_SIZE
 from pangea.creature import Creature
 from pangea.dna import DNA
 from pangea.settings import SimSettings
 from pangea.world import Food, World
 
 
-def _make_dna(speed=25, size=25, vision=25, efficiency=25):
+def _make_dna(speed=20, size=20, vision=20, efficiency=20, lifespan=20):
     """Create a DNA with specified traits."""
     weights = [
-        np.random.randn(4, 8) * 0.5,
-        np.zeros(8),
-        np.random.randn(8, 2) * 0.5,
-        np.zeros(2),
+        np.random.randn(NN_INPUT_SIZE, NN_HIDDEN_SIZE) * 0.5,
+        np.zeros(NN_HIDDEN_SIZE),
+        np.random.randn(NN_HIDDEN_SIZE, NN_OUTPUT_SIZE) * 0.5,
+        np.zeros(NN_OUTPUT_SIZE),
     ]
-    return DNA(weights=weights, speed=speed, size=size, vision=vision, efficiency=efficiency)
+    return DNA(weights=weights, speed=speed, size=size, vision=vision,
+               efficiency=efficiency, lifespan=lifespan)
 
 
 def _make_creature(x=100.0, y=100.0, **kwargs):

@@ -5,22 +5,24 @@ import math
 import numpy as np
 import pytest
 
-from pangea.config import BASE_ENERGY
+from pangea.config import BASE_ENERGY, NN_HIDDEN_SIZE, NN_INPUT_SIZE, NN_OUTPUT_SIZE
 from pangea.creature import Creature
 from pangea.dna import DNA
 from pangea.world import Food
 
 
 class TestCreature:
-    def _make_creature(self, x=100.0, y=100.0, speed=25, size=25, vision=25, efficiency=25):
+    def _make_creature(self, x=100.0, y=100.0, speed=20, size=20, vision=20,
+                       efficiency=20, lifespan=20):
         """Helper to create a creature with specified traits."""
         weights = [
-            np.random.randn(4, 8) * 0.5,
-            np.zeros(8),
-            np.random.randn(8, 2) * 0.5,
-            np.zeros(2),
+            np.random.randn(NN_INPUT_SIZE, NN_HIDDEN_SIZE) * 0.5,
+            np.zeros(NN_HIDDEN_SIZE),
+            np.random.randn(NN_HIDDEN_SIZE, NN_OUTPUT_SIZE) * 0.5,
+            np.zeros(NN_OUTPUT_SIZE),
         ]
-        dna = DNA(weights=weights, speed=speed, size=size, vision=vision, efficiency=efficiency)
+        dna = DNA(weights=weights, speed=speed, size=size, vision=vision,
+                  efficiency=efficiency, lifespan=lifespan)
         return Creature(dna, x, y)
 
     def test_initial_state(self):
@@ -32,11 +34,11 @@ class TestCreature:
         assert c.age == 0.0
 
     def test_sensor_output_shape(self):
-        """Sense should return array of shape (4,)."""
+        """Sense should return array of shape (7,)."""
         c = self._make_creature()
         food = [Food(x=150, y=100)]
         inputs = c.sense(food, 800, 600)
-        assert inputs.shape == (4,)
+        assert inputs.shape == (7,)
 
     def test_sensor_food_distance_normalized(self):
         """Food distance should be normalized between 0 and 1."""
@@ -71,6 +73,21 @@ class TestCreature:
         inputs = c.sense([], 800, 600)
         assert inputs[3] == pytest.approx(0.5)
 
+    def test_sensor_creature_distance(self):
+        """Creature distance sensor should detect nearby creatures."""
+        c1 = self._make_creature(x=100, y=100)
+        c2 = self._make_creature(x=150, y=100)
+        inputs = c1.sense([], 800, 600, creatures=[c1, c2])
+        # Creature distance should be < 1.0 (neighbor detected)
+        assert inputs[4] < 1.0
+
+    def test_sensor_own_speed(self):
+        """Own speed sensor should reflect current speed."""
+        c = self._make_creature()
+        c.speed = 0.0
+        inputs = c.sense([], 800, 600)
+        assert inputs[6] == pytest.approx(0.0)
+
     def test_energy_drains_on_update(self):
         """Energy should decrease after update."""
         c = self._make_creature()
@@ -87,6 +104,15 @@ class TestCreature:
         c.update(1.0)
         assert not c.alive
         assert c.energy == 0
+
+    def test_creature_dies_at_lifespan(self):
+        """Creature should die when age exceeds effective lifespan."""
+        c = self._make_creature(lifespan=20)
+        # effective_lifespan = 10.0 + 20 * 0.5 = 20.0
+        c.energy = 9999  # prevent energy death
+        c.age = 19.9
+        c.update(0.2)  # age becomes 20.1, exceeds 20.0
+        assert not c.alive
 
     def test_eat_increases_energy_and_count(self):
         """Eating should increase energy and food_eaten counter."""
@@ -112,3 +138,19 @@ class TestCreature:
         dna = DNA.random()
         c = Creature(dna, 100, 100, lineage="A")
         assert c.lineage == "A"
+
+    def test_speed_multiplier_affects_movement(self):
+        """speed_multiplier should scale movement distance."""
+        c1 = self._make_creature(x=100, y=100)
+        c2 = self._make_creature(x=100, y=100)
+        c1.heading = 0.0
+        c2.heading = 0.0
+        c1.speed = 2.0
+        c2.speed = 2.0
+
+        c1.update(1 / 60, speed_multiplier=1.0)
+        c2.update(1 / 60, speed_multiplier=0.5)
+
+        dist1 = abs(c1.x - 100.0)
+        dist2 = abs(c2.x - 100.0)
+        assert dist2 < dist1

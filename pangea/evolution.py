@@ -8,7 +8,8 @@ At the end of each generation:
     2. Select the top performers
     3. Clone and mutate them to fill the next generation
 
-No crossover — mutation-only neuroevolution (standard for small NNs).
+Supports optional crossover (sexual reproduction) to blend
+two parents' NN weights and traits before mutation.
 """
 
 from __future__ import annotations
@@ -104,7 +105,7 @@ def mutate_weights(
     return mutated
 
 
-def mutate_traits(dna: DNA) -> tuple[int, int, int, int]:
+def mutate_traits(dna: DNA) -> tuple[int, int, int, int, int]:
     """
     Mutate physical trait allocations while preserving the budget.
 
@@ -116,9 +117,9 @@ def mutate_traits(dna: DNA) -> tuple[int, int, int, int]:
         dna: The parent DNA to mutate traits from.
 
     Returns:
-        Tuple of (speed, size, vision, efficiency) after mutation.
+        Tuple of (speed, size, vision, efficiency, lifespan) after mutation.
     """
-    traits = [dna.speed, dna.size, dna.vision, dna.efficiency]
+    traits = [dna.speed, dna.size, dna.vision, dna.efficiency, dna.lifespan]
     r = TRAIT_MUTATION_RANGE
 
     # Apply random deltas
@@ -140,7 +141,79 @@ def mutate_traits(dna: DNA) -> tuple[int, int, int, int]:
             largest_idx = traits.index(max(traits))
             traits[largest_idx] += diff
 
-    return traits[0], traits[1], traits[2], traits[3]
+    return traits[0], traits[1], traits[2], traits[3], traits[4]
+
+
+# ── Crossover ────────────────────────────────────────────────
+
+
+def crossover_weights(
+    parent_a_weights: list[np.ndarray],
+    parent_b_weights: list[np.ndarray],
+) -> list[np.ndarray]:
+    """
+    Blend two parents' NN weights using a random 50/50 mask.
+
+    For each weight array pair, create a random boolean mask and use
+    np.where to pick from either parent.
+
+    Args:
+        parent_a_weights: Weight arrays [W1, b1, W2, b2] from parent A.
+        parent_b_weights: Weight arrays [W1, b1, W2, b2] from parent B.
+
+    Returns:
+        New list of blended weight arrays.
+    """
+    blended = []
+    for wa, wb in zip(parent_a_weights, parent_b_weights):
+        mask = np.random.random(wa.shape) < 0.5
+        blended.append(np.where(mask, wa, wb))
+    return blended
+
+
+def crossover_traits(
+    parent_a: DNA,
+    parent_b: DNA,
+) -> tuple[int, int, int, int, int]:
+    """
+    Randomly pick each trait from one of two parents, then rescale.
+
+    For each trait (speed, size, vision, efficiency, lifespan), randomly pick
+    from parent_a or parent_b. Rescale to sum to EVOLUTION_POINTS
+    and ensure all traits >= 1.
+
+    Args:
+        parent_a: First parent DNA.
+        parent_b: Second parent DNA.
+
+    Returns:
+        Tuple of (speed, size, vision, efficiency, lifespan) after crossover.
+    """
+    a_traits = [parent_a.speed, parent_a.size, parent_a.vision, parent_a.efficiency, parent_a.lifespan]
+    b_traits = [parent_b.speed, parent_b.size, parent_b.vision, parent_b.efficiency, parent_b.lifespan]
+
+    # Randomly pick each trait from one parent
+    traits = [
+        a if random.random() < 0.5 else b
+        for a, b in zip(a_traits, b_traits)
+    ]
+
+    # Clamp to minimum of 1
+    traits = [max(1, t) for t in traits]
+
+    # Rescale to sum to EVOLUTION_POINTS
+    total = sum(traits)
+    if total != EVOLUTION_POINTS:
+        scale = EVOLUTION_POINTS / total
+        traits = [max(1, round(t * scale)) for t in traits]
+
+        # Fix any rounding error by adjusting the largest trait
+        diff = EVOLUTION_POINTS - sum(traits)
+        if diff != 0:
+            largest_idx = traits.index(max(traits))
+            traits[largest_idx] += diff
+
+    return traits[0], traits[1], traits[2], traits[3], traits[4]
 
 
 # ── Next Generation ─────────────────────────────────────────
@@ -151,6 +224,7 @@ def create_next_generation(
     population_size: int = POPULATION_SIZE,
     mutation_rate: float = MUTATION_RATE,
     mutation_strength: float = MUTATION_STRENGTH,
+    crossover: bool = False,
 ) -> list[DNA]:
     """
     Create the next generation by cloning and mutating top performers.
@@ -159,9 +233,16 @@ def create_next_generation(
     Any remainder slots are filled by cloning from the best performers.
     Each clone has its weights and traits independently mutated.
 
+    When crossover=True and at least 2 parents are available, pairs of
+    parents are randomly selected, their weights and traits are blended
+    via crossover, then mutation is applied to the offspring.
+
     Args:
-        top_dna:         List of DNA from the top performers.
-        population_size: Target population size for the new generation.
+        top_dna:           List of DNA from the top performers.
+        population_size:   Target population size for the new generation.
+        mutation_rate:      Probability of mutating each weight.
+        mutation_strength:  Standard deviation of the Gaussian noise.
+        crossover:         Whether to use sexual reproduction (crossover).
 
     Returns:
         List of new mutated DNA objects.
@@ -170,29 +251,65 @@ def create_next_generation(
         # Extinction — start fresh with random DNA
         return [DNA.random() for _ in range(population_size)]
 
+    # Fall back to clone-and-mutate when crossover requested but only 1 parent
+    use_crossover = crossover and len(top_dna) >= 2
+
     new_generation: list[DNA] = []
-    clones_per_parent = population_size // len(top_dna)
-    remainder = population_size % len(top_dna)
 
-    for i, parent in enumerate(top_dna):
-        # How many clones for this parent
-        count = clones_per_parent + (1 if i < remainder else 0)
+    if use_crossover:
+        for _ in range(population_size):
+            # Pick two distinct parents
+            parent_a, parent_b = random.sample(top_dna, 2)
 
-        for _ in range(count):
-            # Mutate weights (using provided rate and strength)
-            new_weights = mutate_weights(parent.weights, mutation_rate, mutation_strength)
-            # Mutate traits
-            speed, size, vision, efficiency = mutate_traits(parent)
-            # Create new DNA
-            new_generation.append(
-                DNA(
-                    weights=new_weights,
-                    speed=speed,
-                    size=size,
-                    vision=vision,
-                    efficiency=efficiency,
-                )
+            # Crossover weights and traits
+            child_weights = crossover_weights(parent_a.weights, parent_b.weights)
+            speed, size, vision, efficiency, lifespan = crossover_traits(parent_a, parent_b)
+
+            # Apply mutation on top of crossover
+            child_weights = mutate_weights(child_weights, mutation_rate, mutation_strength)
+
+            # Create child DNA
+            child_dna = DNA(
+                weights=child_weights,
+                speed=speed,
+                size=size,
+                vision=vision,
+                efficiency=efficiency,
+                lifespan=lifespan,
             )
+            # Mutate traits
+            speed, size, vision, efficiency, lifespan = mutate_traits(child_dna)
+            child_dna.speed = speed
+            child_dna.size = size
+            child_dna.vision = vision
+            child_dna.efficiency = efficiency
+            child_dna.lifespan = lifespan
+
+            new_generation.append(child_dna)
+    else:
+        clones_per_parent = population_size // len(top_dna)
+        remainder = population_size % len(top_dna)
+
+        for i, parent in enumerate(top_dna):
+            # How many clones for this parent
+            count = clones_per_parent + (1 if i < remainder else 0)
+
+            for _ in range(count):
+                # Mutate weights (using provided rate and strength)
+                new_weights = mutate_weights(parent.weights, mutation_rate, mutation_strength)
+                # Mutate traits
+                speed, size, vision, efficiency, lifespan = mutate_traits(parent)
+                # Create new DNA
+                new_generation.append(
+                    DNA(
+                        weights=new_weights,
+                        speed=speed,
+                        size=size,
+                        vision=vision,
+                        efficiency=efficiency,
+                        lifespan=lifespan,
+                    )
+                )
 
     return new_generation
 

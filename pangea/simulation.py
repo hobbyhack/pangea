@@ -128,6 +128,7 @@ class Simulation:
                 population_size=pop,
                 mutation_rate=self.settings.mutation_rate,
                 mutation_strength=self.settings.mutation_strength,
+                crossover=bool(self.settings.crossover_enabled),
             )
             world = self._create_world(dna_list)
             world.generation = generation

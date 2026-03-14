@@ -18,10 +18,15 @@ TOP_PERFORMERS_COUNT = 10    # How many top creatures survive to reproduce
 # ── Genetic Budget ───────────────────────────────────────────
 EVOLUTION_POINTS = 100       # Total points each creature distributes among traits
 # Default trait allocation for the initial random generation:
-DEFAULT_SPEED = 25           # Points allocated to speed
-DEFAULT_SIZE = 25            # Points allocated to size
-DEFAULT_VISION = 25          # Points allocated to vision range
-DEFAULT_EFFICIENCY = 25      # Points allocated to energy efficiency
+DEFAULT_SPEED = 20           # Points allocated to speed
+DEFAULT_SIZE = 20            # Points allocated to size
+DEFAULT_VISION = 20          # Points allocated to vision range
+DEFAULT_EFFICIENCY = 20      # Points allocated to energy efficiency
+DEFAULT_LIFESPAN = 20        # Points allocated to lifespan
+
+# ── Lifespan Scaling ────────────────────────────────────────
+LIFESPAN_BASE = 10.0         # Minimum lifespan in seconds
+LIFESPAN_SCALE = 0.5         # Additional seconds per trait point
 
 # ── Mutation ─────────────────────────────────────────────────
 MUTATION_RATE = 0.1          # Probability of mutating each weight (0.0 to 1.0)
@@ -34,6 +39,10 @@ FOOD_ENERGY = 30.0           # Energy gained by eating one food item
 FOOD_RADIUS = 4.0            # Radius of food items (for drawing & collision)
 INITIAL_FOOD_COUNT = 30      # Food items present at the start of each generation
 WORLD_WRAP = False           # True = toroidal wrap-around, False = bounded walls
+FOOD_DECAY_TIME = 15.0       # Seconds before uneaten food disappears
+FOOD_CLUSTER_SIZE = 4        # Number of food items spawned per cluster
+SEASON_LENGTH = 60.0         # Seconds per full seasonal cycle
+SEASON_MIN_RATE = 0.2        # Multiplier at seasonal minimum
 
 # ── Creature Physics ─────────────────────────────────────────
 BASE_ENERGY = 100.0          # Starting energy for each creature
@@ -54,7 +63,9 @@ EFFICIENCY_BASE = 0.5        # Minimum efficiency multiplier
 EFFICIENCY_SCALE = 0.02      # 25 pts → efficiency 1.0 (neutral)
 
 # ── Neural Network ───────────────────────────────────────────
-NN_INPUT_SIZE = 4            # Inputs: food distance, food angle, wall distance, energy
+NN_INPUT_SIZE = 7            # Inputs: food dist, food angle, wall dist, energy,
+                             #         nearest creature dist, nearest creature angle,
+                             #         own speed
 NN_HIDDEN_SIZE = 8           # Hidden layer neurons
 NN_OUTPUT_SIZE = 2           # Outputs: turn angle, thrust
 
@@ -77,6 +88,16 @@ HAZARD_MIN_RADIUS = 30.0       # Minimum hazard zone radius in pixels
 HAZARD_MAX_RADIUS = 60.0       # Maximum hazard zone radius in pixels
 HAZARD_DAMAGE = 2.0            # Energy drained per second at the hazard center
 
+# ── Biomes / Terrain ────────────────────────────────────────
+BIOME_COUNT = 4              # Number of biome regions generated per world
+BIOME_MIN_RADIUS = 80.0      # Minimum biome circle radius in pixels
+BIOME_MAX_RADIUS = 150.0     # Maximum biome circle radius in pixels
+BIOME_SPEED_MULTIPLIERS = {  # Movement speed multipliers by biome type
+    "normal": 1.0,
+    "water": 0.5,
+    "road": 1.5,
+}
+
 # ── Colors (RGB) ─────────────────────────────────────────────
 COLOR_BACKGROUND = (15, 15, 25)
 COLOR_FOOD = (50, 205, 50)
@@ -97,3 +118,5 @@ PREDATOR_RADIUS = 8.0            # Predator body radius in pixels
 COLOR_PREDATOR = (255, 50, 50)   # Red color for predator rendering
 COLOR_HAZARD_LAVA = (220, 80, 30)
 COLOR_HAZARD_COLD = (80, 150, 255)
+COLOR_BIOME_WATER = (30, 60, 120)   # Water biome tint color
+COLOR_BIOME_ROAD = (100, 90, 70)    # Road biome tint color

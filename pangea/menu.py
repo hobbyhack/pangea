@@ -196,21 +196,30 @@ class Menu:
                         settings = SimSettings()
                         continue
 
-                    # Check sliders
+                    # Check sliders / toggles
                     for s in sliders:
-                        slider_rect = pygame.Rect(
-                            panel_x + panel_w - slider_w - 40, s["y"], slider_w, slider_h + 16
-                        )
-                        if slider_rect.collidepoint(mouse_pos):
-                            s["dragging"] = True
+                        sdef = s["def"]
+                        if sdef.widget_type == "toggle":
+                            toggle_rect = pygame.Rect(
+                                panel_x + panel_w - slider_w - 40, s["y"], 50, 24
+                            )
+                            if toggle_rect.collidepoint(mouse_pos):
+                                cur = getattr(settings, sdef.key)
+                                setattr(settings, sdef.key, not cur)
+                        else:
+                            slider_rect = pygame.Rect(
+                                panel_x + panel_w - slider_w - 40, s["y"], slider_w, slider_h + 16
+                            )
+                            if slider_rect.collidepoint(mouse_pos):
+                                s["dragging"] = True
 
                 if event.type == pygame.MOUSEBUTTONUP:
                     for s in sliders:
                         s["dragging"] = False
 
-            # Update dragging sliders
+            # Update dragging sliders (skip toggles)
             for s in sliders:
-                if s["dragging"]:
+                if s["dragging"] and s["def"].widget_type != "toggle":
                     sdef = s["def"]
                     sx = panel_x + panel_w - slider_w - 40
                     t = max(0.0, min(1.0, (mouse_pos[0] - sx) / slider_w))
@@ -251,29 +260,34 @@ class Menu:
                 label = self.font_small.render(sdef.label, True, (180, 180, 200))
                 self.surface.blit(label, (panel_x + 140, s["y"] + 2))
 
-                # Slider track
                 sx = panel_x + panel_w - slider_w - 40
-                sy = s["y"] + 8
                 val = getattr(settings, sdef.key)
-                t = (val - sdef.min_val) / (sdef.max_val - sdef.min_val) if sdef.max_val > sdef.min_val else 0
 
-                # Track background
-                pygame.draw.rect(self.surface, (40, 40, 55), (sx, sy, slider_w, slider_h), border_radius=4)
-                # Filled portion with color gradient
-                fill_color = self._lerp_color((60, 130, 200), (100, 220, 160), t)
-                fill_w = int(slider_w * t)
-                if fill_w > 0:
-                    pygame.draw.rect(self.surface, fill_color, (sx, sy, fill_w, slider_h), border_radius=4)
+                if sdef.widget_type == "toggle":
+                    # Draw toggle switch
+                    self._draw_toggle(sx, s["y"] + 4, bool(val))
+                else:
+                    # Slider track
+                    sy = s["y"] + 8
+                    t = (val - sdef.min_val) / (sdef.max_val - sdef.min_val) if sdef.max_val > sdef.min_val else 0
 
-                # Thumb
-                thumb_x = sx + int(slider_w * t)
-                thumb_color = (200, 210, 230) if s["dragging"] else (150, 160, 180)
-                pygame.draw.circle(self.surface, thumb_color, (thumb_x, sy + slider_h // 2), 7)
+                    # Track background
+                    pygame.draw.rect(self.surface, (40, 40, 55), (sx, sy, slider_w, slider_h), border_radius=4)
+                    # Filled portion with color gradient
+                    fill_color = self._lerp_color((60, 130, 200), (100, 220, 160), t)
+                    fill_w = int(slider_w * t)
+                    if fill_w > 0:
+                        pygame.draw.rect(self.surface, fill_color, (sx, sy, fill_w, slider_h), border_radius=4)
 
-                # Value text
-                val_str = f"{val:{sdef.fmt}}"
-                val_text = self.font_small.render(val_str, True, (160, 170, 190))
-                self.surface.blit(val_text, (sx + slider_w + 10, s["y"] + 2))
+                    # Thumb
+                    thumb_x = sx + int(slider_w * t)
+                    thumb_color = (200, 210, 230) if s["dragging"] else (150, 160, 180)
+                    pygame.draw.circle(self.surface, thumb_color, (thumb_x, sy + slider_h // 2), 7)
+
+                    # Value text
+                    val_str = f"{val:{sdef.fmt}}"
+                    val_text = self.font_small.render(val_str, True, (160, 170, 190))
+                    self.surface.blit(val_text, (sx + slider_w + 10, s["y"] + 2))
 
             back_btn.update(mouse_pos)
             back_btn.draw(self.surface, self.font)
@@ -548,6 +562,16 @@ class Menu:
             int(c1[1] + (c2[1] - c1[1]) * t),
             int(c1[2] + (c2[2] - c1[2]) * t),
         )
+
+    def _draw_toggle(self, x: int, y: int, on: bool) -> None:
+        """Draw a toggle switch widget."""
+        w, h = 50, 20
+        bg = (60, 140, 80) if on else (60, 60, 70)
+        pygame.draw.rect(self.surface, bg, (x, y, w, h), border_radius=10)
+        knob_x = x + w - 14 if on else x + 6
+        pygame.draw.circle(self.surface, (220, 225, 235), (knob_x, y + h // 2), 8)
+        label = self.font_small.render("ON" if on else "OFF", True, (180, 190, 210))
+        self.surface.blit(label, (x + w + 8, y + 2))
 
     def _show_message(self, *lines: str) -> None:
         """Show a simple message screen until ESC is pressed."""

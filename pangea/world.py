@@ -1,8 +1,9 @@
 """
 World — the simulation environment.
 ============================================================
-Manages the 2D arena, food spawning, creature-food collisions,
-boundary enforcement, and player tool effects (zones, barriers).
+Manages the 2D arena, food spawning/decay, creature-food collisions,
+boundary enforcement, biome regions, hazard zones, predators,
+and player tool effects (zones, barriers).
 """
 
 from __future__ import annotations
@@ -12,21 +13,20 @@ import random
 from dataclasses import dataclass
 
 from pangea.config import (
+    BIOME_MAX_RADIUS,
+    BIOME_MIN_RADIUS,
+    BIOME_SPEED_MULTIPLIERS,
     FOOD_ENERGY,
     FOOD_RADIUS,
-    FOOD_SPAWN_RATE,
-    GENERATION_TIME_LIMIT,
     HAZARD_DAMAGE,
     HAZARD_MAX_RADIUS,
     HAZARD_MIN_RADIUS,
-    INITIAL_FOOD_COUNT,
     PREDATOR_DAMAGE,
     PREDATOR_RADIUS,
     PREDATOR_SPEED,
     PREDATOR_VISION,
     WINDOW_HEIGHT,
     WINDOW_WIDTH,
-    WORLD_WRAP,
 )
 from pangea.creature import Creature
 from pangea.settings import SimSettings
@@ -41,6 +41,8 @@ class Food:
     y: float
     energy: float = FOOD_ENERGY
     radius: float = FOOD_RADIUS
+    age: float = 0.0
+    lifetime: float = 0.0  # 0 means no decay (set by World from settings)
 
 
 @dataclass
@@ -52,6 +54,17 @@ class Hazard:
     radius: float
     damage_rate: float = HAZARD_DAMAGE
     hazard_type: str = "lava"  # "lava" or "cold"
+
+
+@dataclass
+class Biome:
+    """A circular terrain region with a movement speed multiplier."""
+
+    x: float
+    y: float
+    radius: float
+    biome_type: str          # "water" or "road"
+    speed_multiplier: float  # from BIOME_SPEED_MULTIPLIERS
 
 
 class Predator:
@@ -121,10 +134,12 @@ class World:
         height:       Arena height in pixels.
         creatures:    List of living (and dead) creatures this generation.
         food:         List of available food items.
+        biomes:       List of terrain biome regions.
         elapsed_time: Seconds elapsed in the current generation.
         generation:   Current generation number (starts at 1).
         settings:     Runtime simulation settings.
         tools:        Player interaction tools (zones, barriers, etc.).
+        season_time:  Accumulated time for seasonal food oscillation.
     """
 
     def __init__(
@@ -143,6 +158,7 @@ class World:
         self.generation = 1
         self.settings = settings or SimSettings()
         self.tools = tools
+        self.season_time = 0.0
 
         # Accumulator for fractional food spawning
         self._food_spawn_accum = 0.0
@@ -154,6 +170,11 @@ class World:
         self.hazards: list[Hazard] = []
         for _ in range(self.settings.hazard_count):
             self.hazards.append(self._random_hazard())
+
+        # Generate biome regions
+        self.biomes: list[Biome] = []
+        for _ in range(self.settings.biome_count):
+            self.biomes.append(self._random_biome())
 
         # Generate predators
         self.predators: list[Predator] = []
@@ -186,14 +207,73 @@ class World:
         hazard_type = random.choice(["lava", "cold"])
         return Hazard(x=x, y=y, radius=radius, damage_rate=HAZARD_DAMAGE, hazard_type=hazard_type)
 
+    # ── Biome Generation ──────────────────────────────────────
+
+    def _random_biome(self) -> Biome:
+        """Create a biome at a random position with a random type."""
+        margin = BIOME_MAX_RADIUS
+        x = random.uniform(margin, self.width - margin)
+        y = random.uniform(margin, self.height - margin)
+        radius = random.uniform(BIOME_MIN_RADIUS, BIOME_MAX_RADIUS)
+        biome_type = random.choice(["water", "road"])
+        speed_multiplier = BIOME_SPEED_MULTIPLIERS[biome_type]
+        return Biome(
+            x=x, y=y, radius=radius,
+            biome_type=biome_type,
+            speed_multiplier=speed_multiplier,
+        )
+
+    def get_speed_multiplier(self, x: float, y: float) -> float:
+        """
+        Get the movement speed multiplier at a given position.
+
+        Checks each biome region; if the point is inside, returns
+        that biome's speed multiplier. If inside multiple biomes,
+        the first match wins. Returns 1.0 if outside all biomes.
+        """
+        for biome in self.biomes:
+            dx = x - biome.x
+            dy = y - biome.y
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist < biome.radius:
+                return biome.speed_multiplier
+        return 1.0
+
     # ── Food Spawning ────────────────────────────────────────
+
+    def _make_food(self, x: float, y: float) -> Food:
+        """Create a food item with current settings for energy and decay."""
+        return Food(
+            x=x, y=y,
+            energy=self.settings.food_energy,
+            lifetime=self.settings.food_decay_time,
+        )
 
     def _random_food(self) -> Food:
         """Create a food item at a random position."""
         margin = FOOD_RADIUS
         x = random.uniform(margin, self.width - margin)
         y = random.uniform(margin, self.height - margin)
-        return Food(x=x, y=y, energy=self.settings.food_energy)
+        return self._make_food(x, y)
+
+    def _spawn_cluster(self, center_x: float, center_y: float) -> None:
+        """Spawn a cluster of food items around a center point."""
+        cluster_size = self.settings.food_cluster_size
+        margin = FOOD_RADIUS
+        for _ in range(cluster_size):
+            fx = center_x + random.gauss(0, 30)
+            fy = center_y + random.gauss(0, 30)
+            fx = max(margin, min(self.width - margin, fx))
+            fy = max(margin, min(self.height - margin, fy))
+            self.food.append(self._make_food(fx, fy))
+
+    def seasonal_multiplier(self) -> float:
+        """Compute the current seasonal food spawn multiplier."""
+        season_length = self.settings.season_length
+        min_rate = self.settings.season_min_rate
+        return min_rate + (1 - min_rate) * (
+            0.5 + 0.5 * math.sin(2 * math.pi * self.season_time / season_length)
+        )
 
     def spawn_food(self, dt: float) -> None:
         """Spawn food probabilistically based on settings and tool state."""
@@ -201,10 +281,17 @@ class World:
         if self.tools:
             multiplier = self.tools.get_food_spawn_multiplier()
 
+        # Apply seasonal multiplier
+        multiplier *= self.seasonal_multiplier()
+
         self._food_spawn_accum += self.settings.food_spawn_rate * multiplier * dt
         while self._food_spawn_accum >= 1.0:
             self._food_spawn_accum -= 1.0
-            self.food.append(self._random_food())
+            # Spawn a cluster instead of a single food item
+            margin = FOOD_RADIUS
+            cx = random.uniform(margin, self.width - margin)
+            cy = random.uniform(margin, self.height - margin)
+            self._spawn_cluster(cx, cy)
 
         # Bounty zones spawn extra food nearby
         if self.tools:
@@ -216,13 +303,13 @@ class World:
                     fy = zone.y + math.sin(angle) * dist
                     fx = max(FOOD_RADIUS, min(self.width - FOOD_RADIUS, fx))
                     fy = max(FOOD_RADIUS, min(self.height - FOOD_RADIUS, fy))
-                    self.food.append(Food(x=fx, y=fy, energy=self.settings.food_energy))
+                    self.food.append(self._make_food(fx, fy))
 
     def add_food_at(self, x: float, y: float) -> None:
         """Add a food item at a specific position (from player tool)."""
         x = max(FOOD_RADIUS, min(self.width - FOOD_RADIUS, x))
         y = max(FOOD_RADIUS, min(self.height - FOOD_RADIUS, y))
-        self.food.append(Food(x=x, y=y, energy=self.settings.food_energy))
+        self.food.append(self._make_food(x, y))
 
     # ── Collision Detection ──────────────────────────────────
 
@@ -326,15 +413,21 @@ class World:
         """
         Advance the simulation by one time step.
 
-        For each living creature: sense → think → act → move →
-        apply tool effects → check collisions.
+        For each living creature: sense -> think -> act -> move ->
+        apply tool effects -> check collisions.
         """
         self.elapsed_time += dt
         self.day_night_time += dt
+        self.season_time += dt
         wrap = self.settings.world_wrap
 
         # Spawn food
         self.spawn_food(dt)
+
+        # Age food and remove expired items
+        for food in self.food:
+            food.age += dt
+        self.food = [f for f in self.food if f.lifetime <= 0 or f.age < f.lifetime]
 
         # Update player tools (age zones/barriers)
         if self.tools:
@@ -353,13 +446,17 @@ class World:
             inputs = creature.sense(
                 self.food, self.width, self.height, wrap,
                 vision_multiplier=vision_multiplier,
+                creatures=self.creatures,
             )
 
             # Think and act
             creature.think_and_act(inputs)
 
-            # Update physics
-            creature.update(dt)
+            # Compute biome speed multiplier at creature's position
+            speed_mult = self.get_speed_multiplier(creature.x, creature.y)
+
+            # Update physics (with biome speed multiplier)
+            creature.update(dt, speed_multiplier=speed_mult)
 
             # Apply player tool effects (zones, barriers)
             self.apply_tool_effects(creature, dt)

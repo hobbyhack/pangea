@@ -5,10 +5,11 @@ Bundles neural network weights with physical trait allocations.
 Enforces the "Genetic Budget" — traits must sum to EVOLUTION_POINTS.
 
 Traits and what they control:
-    speed      → How fast the creature can move
-    size       → How large the creature is (bigger = slower)
-    vision     → How far the creature can detect food
-    efficiency → How efficiently the creature uses energy
+    speed      -> How fast the creature can move
+    size       -> How large the creature is (bigger = slower)
+    vision     -> How far the creature can detect food
+    efficiency -> How efficiently the creature uses energy
+    lifespan   -> How long the creature can live (max age)
 """
 
 from __future__ import annotations
@@ -18,9 +19,12 @@ from dataclasses import dataclass
 import numpy as np
 
 from pangea.config import (
+    DEFAULT_LIFESPAN,
     EFFICIENCY_BASE,
     EFFICIENCY_SCALE,
     EVOLUTION_POINTS,
+    LIFESPAN_BASE,
+    LIFESPAN_SCALE,
     NN_HIDDEN_SIZE,
     NN_INPUT_SIZE,
     NN_OUTPUT_SIZE,
@@ -44,6 +48,7 @@ class DNA:
         size:    Evolution points allocated to size (higher = bigger, but slower).
         vision:  Evolution points allocated to vision range (higher = sees farther).
         efficiency: Evolution points allocated to energy efficiency (higher = less drain).
+        lifespan: Evolution points allocated to lifespan (higher = lives longer).
     """
 
     weights: list[np.ndarray]
@@ -51,6 +56,7 @@ class DNA:
     size: int
     vision: int
     efficiency: int
+    lifespan: int
 
     # ── Trait Scaling ────────────────────────────────────────
 
@@ -75,6 +81,11 @@ class DNA:
         return EFFICIENCY_BASE + self.efficiency * EFFICIENCY_SCALE
 
     @property
+    def effective_lifespan(self) -> float:
+        """Maximum age in seconds before the creature dies of old age."""
+        return LIFESPAN_BASE + self.lifespan * LIFESPAN_SCALE
+
+    @property
     def max_speed(self) -> float:
         """Actual max speed after size penalty."""
         return max(0.5, self.effective_speed - self.effective_radius * SIZE_SPEED_PENALTY)
@@ -83,7 +94,10 @@ class DNA:
 
     def validate_budget(self) -> bool:
         """Check that trait points sum to EVOLUTION_POINTS."""
-        return self.speed + self.size + self.vision + self.efficiency == EVOLUTION_POINTS
+        return (
+            self.speed + self.size + self.vision + self.efficiency + self.lifespan
+            == EVOLUTION_POINTS
+        )
 
     # ── Serialization ────────────────────────────────────────
 
@@ -100,6 +114,7 @@ class DNA:
             "size": int(self.size),
             "vision": int(self.vision),
             "efficiency": int(self.efficiency),
+            "lifespan": int(self.lifespan),
         }
 
     @classmethod
@@ -117,19 +132,21 @@ class DNA:
             size=data["size"],
             vision=data["vision"],
             efficiency=data["efficiency"],
+            lifespan=data.get("lifespan", DEFAULT_LIFESPAN),
         )
 
     @classmethod
     def random(cls) -> DNA:
         """Create a DNA with random weights and randomized trait allocation."""
         # Random trait allocation that sums to EVOLUTION_POINTS
-        # Generate 3 random cut points, then compute segment lengths
-        cuts = sorted(np.random.randint(1, EVOLUTION_POINTS, size=3))
+        # Generate 4 random cut points, then compute segment lengths for 5 traits
+        cuts = sorted(np.random.randint(1, EVOLUTION_POINTS, size=4))
         traits = [
             cuts[0],
             cuts[1] - cuts[0],
             cuts[2] - cuts[1],
-            EVOLUTION_POINTS - cuts[2],
+            cuts[3] - cuts[2],
+            EVOLUTION_POINTS - cuts[3],
         ]
         # Ensure minimum of 1 per trait
         traits = [max(1, t) for t in traits]
@@ -151,4 +168,5 @@ class DNA:
             size=traits[1],
             vision=traits[2],
             efficiency=traits[3],
+            lifespan=traits[4],
         )

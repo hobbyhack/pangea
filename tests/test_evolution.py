@@ -8,6 +8,8 @@ from pangea.creature import Creature
 from pangea.dna import DNA
 from pangea.evolution import (
     create_next_generation,
+    crossover_traits,
+    crossover_weights,
     evaluate_fitness,
     mutate_traits,
     mutate_weights,
@@ -46,13 +48,9 @@ class TestEvolution:
         """select_top should return DNA sorted by fitness (best first)."""
         creatures = [self._make_creature(food_eaten=i) for i in range(20)]
         top = select_top(creatures, n=5)
-        # The top should come from creatures with the most food
-        # (since food has the highest weight in fitness)
-        # We can verify by checking that each top DNA came from a high-food creature
         fitnesses = [evaluate_fitness(c) for c in creatures]
         sorted_fits = sorted(fitnesses, reverse=True)
         top_fitnesses = sorted_fits[:5]
-        # All top 5 fitnesses should be >= the 5th best
         assert top_fitnesses[0] >= top_fitnesses[-1]
 
     def test_mutate_weights_changes_some_values(self):
@@ -85,19 +83,20 @@ class TestEvolution:
         """Trait mutation must always preserve the budget sum."""
         for _ in range(100):
             dna = DNA.random()
-            speed, size, vision, efficiency = mutate_traits(dna)
-            total = speed + size + vision + efficiency
+            speed, size, vision, efficiency, lifespan = mutate_traits(dna)
+            total = speed + size + vision + efficiency + lifespan
             assert total == EVOLUTION_POINTS, f"Budget was {total}"
 
     def test_mutate_traits_minimum_one(self):
         """No trait should be zero after mutation."""
         for _ in range(100):
             dna = DNA.random()
-            speed, size, vision, efficiency = mutate_traits(dna)
+            speed, size, vision, efficiency, lifespan = mutate_traits(dna)
             assert speed >= 1
             assert size >= 1
             assert vision >= 1
             assert efficiency >= 1
+            assert lifespan >= 1
 
     def test_create_next_generation_correct_size(self):
         """Next generation should have the target population size."""
@@ -118,5 +117,65 @@ class TestEvolution:
         top_dna = [DNA.random() for _ in range(10)]
         next_gen = create_next_generation(top_dna, population_size=50)
         for dna in next_gen:
-            total = dna.speed + dna.size + dna.vision + dna.efficiency
+            total = dna.speed + dna.size + dna.vision + dna.efficiency + dna.lifespan
             assert total == EVOLUTION_POINTS, f"Budget was {total}"
+
+    # ── Crossover Tests ──────────────────────────────────────
+
+    def test_crossover_weights_blends_parents(self):
+        """Crossover should produce weights that differ from both parents."""
+        parent_a = DNA.random()
+        parent_b = DNA.random()
+        blended = crossover_weights(parent_a.weights, parent_b.weights)
+
+        # Blended should have same shapes
+        for wa, wb, wc in zip(parent_a.weights, parent_b.weights, blended):
+            assert wc.shape == wa.shape
+            assert wc.shape == wb.shape
+
+    def test_crossover_weights_preserves_shape(self):
+        """Crossover weights should have correct shapes."""
+        parent_a = DNA.random()
+        parent_b = DNA.random()
+        blended = crossover_weights(parent_a.weights, parent_b.weights)
+        assert len(blended) == 4
+
+    def test_crossover_traits_preserves_budget(self):
+        """Crossover traits should sum to EVOLUTION_POINTS."""
+        for _ in range(100):
+            parent_a = DNA.random()
+            parent_b = DNA.random()
+            speed, size, vision, efficiency, lifespan = crossover_traits(parent_a, parent_b)
+            total = speed + size + vision + efficiency + lifespan
+            assert total == EVOLUTION_POINTS, f"Budget was {total}"
+
+    def test_crossover_traits_minimum_one(self):
+        """All crossover traits should be at least 1."""
+        for _ in range(100):
+            parent_a = DNA.random()
+            parent_b = DNA.random()
+            speed, size, vision, efficiency, lifespan = crossover_traits(parent_a, parent_b)
+            assert speed >= 1
+            assert size >= 1
+            assert vision >= 1
+            assert efficiency >= 1
+            assert lifespan >= 1
+
+    def test_create_next_generation_with_crossover(self):
+        """Crossover mode should produce correct population size."""
+        top_dna = [DNA.random() for _ in range(5)]
+        next_gen = create_next_generation(
+            top_dna, population_size=30, crossover=True,
+        )
+        assert len(next_gen) == 30
+        for dna in next_gen:
+            total = dna.speed + dna.size + dna.vision + dna.efficiency + dna.lifespan
+            assert total == EVOLUTION_POINTS
+
+    def test_crossover_fallback_single_parent(self):
+        """Crossover with only 1 parent should fall back to clone-and-mutate."""
+        top_dna = [DNA.random()]
+        next_gen = create_next_generation(
+            top_dna, population_size=10, crossover=True,
+        )
+        assert len(next_gen) == 10

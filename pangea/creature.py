@@ -5,14 +5,17 @@ Each creature has a position, velocity, energy, and a neural network brain.
 Every frame it senses the world, thinks, acts, and updates its physics.
 
 Sensor inputs (all normalized):
-    [0] Distance to nearest food  → 0.0 (touching) to 1.0 (at vision limit / none)
-    [1] Angle to nearest food     → -1.0 (hard left) to 1.0 (hard right), 0 if none
-    [2] Distance to nearest wall  → 0.0 (touching) to 1.0 (far away)
-    [3] Energy level              → 0.0 (empty) to 1.0 (full or above)
+    [0] Distance to nearest food      -> 0.0 (touching) to 1.0 (at vision limit / none)
+    [1] Angle to nearest food         -> -1.0 (hard left) to 1.0 (hard right), 0 if none
+    [2] Distance to nearest wall      -> 0.0 (touching) to 1.0 (far away)
+    [3] Energy level                  -> 0.0 (empty) to 1.0 (full or above)
+    [4] Distance to nearest creature  -> 0.0 (touching) to 1.0 (at vision limit / none)
+    [5] Angle to nearest creature     -> -1.0 (hard left) to 1.0 (hard right), 0 if none
+    [6] Own speed                     -> 0.0 (stopped) to 1.0 (max speed)
 
 Brain outputs:
-    [0] Turn angle → mapped to [-pi, pi]
-    [1] Thrust    → mapped to [0, 1]
+    [0] Turn angle -> mapped to [-pi, pi]
+    [1] Thrust    -> mapped to [0, 1]
 """
 
 from __future__ import annotations
@@ -48,38 +51,41 @@ class Creature:
 
     # ── Sensors ──────────────────────────────────────────────
 
-    def sense(
+    def _find_nearest(
         self,
-        food_list: list,
+        targets: list,
+        vision: float,
         world_width: float,
         world_height: float,
-        wrap: bool = False,
-        vision_multiplier: float = 1.0,
-    ) -> np.ndarray:
+        wrap: bool,
+        skip_self: bool = False,
+    ) -> tuple[float, float]:
         """
-        Compute the 4 normalized sensor inputs.
+        Find the nearest target's normalized distance and angle.
 
         Args:
-            food_list:         List of food objects with .x, .y attributes.
-            world_width:       Width of the world in pixels.
-            world_height:      Height of the world in pixels.
-            wrap:              Whether the world wraps around.
-            vision_multiplier: Scales effective vision (e.g. for day/night cycle).
+            targets:      Objects with .x, .y attributes (and .alive if skip_self).
+            vision:       Vision range in pixels.
+            world_width:  World width for wrap-around.
+            world_height: World height for wrap-around.
+            wrap:         Whether the world wraps around.
+            skip_self:    If True, skip targets that are self or not alive.
 
         Returns:
-            numpy array of shape (4,) with sensor values.
+            Tuple of (normalized_distance, normalized_angle).
+            Distance: 0.0 (touching) to 1.0 (at vision limit or none found).
+            Angle: -1.0 to 1.0, 0.0 if none found.
         """
-        vision = self.dna.effective_vision * vision_multiplier
+        best_dist = float("inf")
+        best_angle = 0.0
 
-        # ─ Nearest food ─
-        nearest_dist = float("inf")
-        nearest_angle = 0.0
+        for target in targets:
+            if skip_self and (target is self or not target.alive):
+                continue
 
-        for food in food_list:
-            dx = food.x - self.x
-            dy = food.y - self.y
+            dx = target.x - self.x
+            dy = target.y - self.y
 
-            # Handle wrap-around distances
             if wrap:
                 if abs(dx) > world_width / 2:
                     dx -= math.copysign(world_width, dx)
@@ -87,22 +93,44 @@ class Creature:
                     dy -= math.copysign(world_height, dy)
 
             dist = math.sqrt(dx * dx + dy * dy)
-            if dist < nearest_dist and dist <= vision:
-                nearest_dist = dist
-                # Signed angle between heading and direction to food
-                food_angle = math.atan2(dy, dx)
-                nearest_angle = food_angle - self.heading
-                # Normalize to [-pi, pi]
-                nearest_angle = (nearest_angle + math.pi) % (2 * math.pi) - math.pi
+            if dist < best_dist and dist <= vision:
+                best_dist = dist
+                angle = math.atan2(dy, dx) - self.heading
+                best_angle = (angle + math.pi) % (2 * math.pi) - math.pi
 
-        # Normalize food distance: 0 = touching, 1 = at vision limit or no food
-        if nearest_dist <= vision:
-            food_dist_normalized = nearest_dist / vision
-        else:
-            food_dist_normalized = 1.0
+        if best_dist <= vision:
+            return best_dist / vision, best_angle / math.pi
+        return 1.0, 0.0
 
-        # Normalize food angle to [-1, 1]
-        food_angle_normalized = nearest_angle / math.pi if nearest_dist <= vision else 0.0
+    def sense(
+        self,
+        food_list: list,
+        world_width: float,
+        world_height: float,
+        wrap: bool = False,
+        vision_multiplier: float = 1.0,
+        creatures: list | None = None,
+    ) -> np.ndarray:
+        """
+        Compute the 7 normalized sensor inputs.
+
+        Args:
+            food_list:         List of food objects with .x, .y attributes.
+            world_width:       Width of the world in pixels.
+            world_height:      Height of the world in pixels.
+            wrap:              Whether the world wraps around.
+            vision_multiplier: Scales effective vision (e.g. for day/night cycle).
+            creatures:         List of all creatures for neighbor detection.
+
+        Returns:
+            numpy array of shape (7,) with sensor values.
+        """
+        vision = self.dna.effective_vision * vision_multiplier
+
+        # ─ Nearest food ─
+        food_dist_normalized, food_angle_normalized = self._find_nearest(
+            food_list, vision, world_width, world_height, wrap,
+        )
 
         # ─ Wall distance ─
         if wrap:
@@ -118,11 +146,26 @@ class Creature:
         # ─ Energy level ─
         energy_normalized = min(self.energy / BASE_ENERGY, 1.0)
 
+        # ─ Nearest creature ─
+        if creatures is not None:
+            creature_dist_normalized, creature_angle_normalized = self._find_nearest(
+                creatures, vision, world_width, world_height, wrap, skip_self=True,
+            )
+        else:
+            creature_dist_normalized = 1.0
+            creature_angle_normalized = 0.0
+
+        # ─ Own speed ─
+        speed_normalized = min(self.speed / max(self.dna.max_speed, 0.01), 1.0)
+
         return np.array([
             food_dist_normalized,
             food_angle_normalized,
             wall_dist_normalized,
             energy_normalized,
+            creature_dist_normalized,
+            creature_angle_normalized,
+            speed_normalized,
         ])
 
     # ── Actions ──────────────────────────────────────────────
@@ -132,7 +175,7 @@ class Creature:
         Run the brain and apply its outputs to movement.
 
         Args:
-            inputs: Sensor array of shape (4,).
+            inputs: Sensor array of shape (7,).
         """
         outputs = self.brain.forward(inputs)
 
@@ -148,21 +191,26 @@ class Creature:
 
     # ── Physics Update ───────────────────────────────────────
 
-    def update(self, dt: float) -> None:
+    def update(self, dt: float, speed_multiplier: float = 1.0) -> None:
         """
         Update position and drain energy for one frame.
 
         Args:
-            dt: Time step in seconds.
+            dt:               Time step in seconds.
+            speed_multiplier: Biome speed multiplier (default 1.0 for normal terrain).
+                              Values < 1.0 slow movement (e.g. water),
+                              values > 1.0 speed movement (e.g. road).
+                              Energy cost is NOT affected by this multiplier.
         """
         if not self.alive:
             return
 
-        # Move
-        self.x += math.cos(self.heading) * self.speed * dt * 60  # normalize to 60fps
-        self.y += math.sin(self.heading) * self.speed * dt * 60
+        # Move (apply biome speed multiplier to movement only)
+        self.x += math.cos(self.heading) * self.speed * speed_multiplier * dt * 60
+        self.y += math.sin(self.heading) * self.speed * speed_multiplier * dt * 60
 
         # Drain energy — faster and bigger creatures use more energy
+        # Energy cost does NOT scale with biome multiplier
         energy_cost = (
             self.speed
             * (1.0 / self.dna.effective_efficiency)
@@ -177,9 +225,13 @@ class Creature:
         # Track age
         self.age += dt
 
-        # Check death
+        # Check death — energy depletion
         if self.energy <= 0:
             self.energy = 0
+            self.alive = False
+
+        # Check death — lifespan exceeded
+        if self.alive and self.age >= self.dna.effective_lifespan:
             self.alive = False
 
     # ── Eating ───────────────────────────────────────────────
