@@ -142,6 +142,9 @@ class Renderer:
         self.particles = ParticleSystem()
         self.frame = 0
 
+        # Selected creature for inspection
+        self.selected_creature: Creature | None = None
+
         # Track previous alive state for death particles
         self._prev_alive: dict[int, bool] = {}
         # Track previous food count for eat particles
@@ -613,7 +616,7 @@ class Renderer:
             y += 20
 
         # Controls hint at bottom
-        controls = "SPACE=Pause  F=Fast  +/-=Speed  D=Debug  E=Evo  1-6=Tools  ESC=Menu"
+        controls = "SPACE=Pause  F=Fast  +/-=Speed  D=Debug  E=Evo  1-6=Tools  RClick=Inspect  ESC=Menu"
         text = self.font_small.render(controls, True, (70, 70, 95))
         self.surface.blit(text, (10, config.WINDOW_HEIGHT - 22))
 
@@ -1013,3 +1016,104 @@ class Renderer:
                 txt = self.font_small.render(text_str, True, color)
                 self.surface.blit(txt, (panel_x + 12, summary_y))
                 summary_y += 18
+
+    # ── Creature Inspection ──────────────────────────────────
+
+    def try_select_creature(self, world: World, mx: int, my: int) -> bool:
+        """
+        Try to select a creature at the given screen coordinates.
+
+        Returns True if a creature was selected, False otherwise.
+        """
+        best_creature = None
+        best_dist_sq = float("inf")
+
+        for creature in world.creatures:
+            if not creature.alive:
+                continue
+            dx = creature.x - mx
+            dy = creature.y - my
+            dist_sq = dx * dx + dy * dy
+            # Click within creature radius + a generous margin
+            click_radius = max(10, creature.dna.effective_radius + 5)
+            if dist_sq < click_radius * click_radius and dist_sq < best_dist_sq:
+                best_dist_sq = dist_sq
+                best_creature = creature
+
+        self.selected_creature = best_creature
+        return best_creature is not None
+
+    def deselect_creature(self) -> None:
+        """Deselect the currently selected creature."""
+        self.selected_creature = None
+
+    def draw_creature_stats(self, world: World, mode: str) -> None:
+        """Draw a stats panel for the selected creature."""
+        creature = self.selected_creature
+        if creature is None or not creature.alive:
+            self.selected_creature = None
+            return
+
+        dna = creature.dna
+        cx, cy = int(creature.x), int(creature.y)
+
+        # Selection ring around the creature
+        radius = max(2, int(dna.effective_radius))
+        ring_radius = radius + 8
+        pulse = 0.7 + 0.3 * math.sin(self.frame * 0.15)
+        ring_alpha = int(200 * pulse)
+        ring_surf = pygame.Surface((ring_radius * 2 + 4, ring_radius * 2 + 4), pygame.SRCALPHA)
+        pygame.draw.circle(
+            ring_surf, (255, 255, 255, ring_alpha),
+            (ring_radius + 2, ring_radius + 2), ring_radius, 2,
+        )
+        self.surface.blit(ring_surf, (cx - ring_radius - 2, cy - ring_radius - 2))
+
+        # Stats panel — position near creature but keep on-screen
+        panel_w = 200
+        panel_h = 190
+        px = cx + ring_radius + 10
+        py = cy - panel_h // 2
+
+        # Keep panel on screen
+        sw = self.surface.get_width()
+        sh = self.surface.get_height()
+        if px + panel_w > sw - 5:
+            px = cx - ring_radius - panel_w - 10
+        if py < 5:
+            py = 5
+        if py + panel_h > sh - 5:
+            py = sh - panel_h - 5
+
+        # Panel background
+        panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+        panel.fill((10, 12, 25, 220))
+        pygame.draw.rect(panel, (80, 90, 120), (0, 0, panel_w, panel_h), 1, border_radius=6)
+        self.surface.blit(panel, (px, py))
+
+        # Title
+        title = self.font.render("Creature Stats", True, (140, 180, 255))
+        self.surface.blit(title, (px + 8, py + 6))
+
+        # Stats lines
+        y = py + 28
+        energy_pct = creature.energy / BASE_ENERGY * 100
+        age_max = dna.effective_lifespan
+        stats_lines = [
+            (f"Energy: {creature.energy:.0f} ({energy_pct:.0f}%)",
+             (100, 255, 130) if energy_pct > 50 else (255, 200, 50) if energy_pct > 25 else (255, 80, 60)),
+            (f"Food:   {creature.food_eaten}", (140, 230, 140)),
+            (f"Age:    {creature.age:.1f}s / {age_max:.0f}s", (180, 180, 200)),
+            ("", (0, 0, 0)),
+            (f"Speed:      {dna.speed:3d}  ({dna.max_speed:.1f} px/f)", (80, 200, 255)),
+            (f"Size:       {dna.size:3d}  (r={dna.effective_radius:.1f})", (255, 140, 60)),
+            (f"Vision:     {dna.vision:3d}  ({dna.effective_vision:.0f} px)", (180, 100, 255)),
+            (f"Efficiency: {dna.efficiency:3d}  (x{dna.effective_efficiency:.2f})", (100, 255, 120)),
+            (f"Lifespan:   {dna.lifespan:3d}  ({age_max:.0f}s)", (220, 200, 60)),
+        ]
+
+        for text_str, color in stats_lines:
+            if text_str:
+                txt = self.font_small.render(text_str, True, color)
+                self.surface.blit(txt, (px + 8, y))
+            y += 16

@@ -143,6 +143,7 @@ SETTING_DEFS: list[SettingDef] = [
     SettingDef("season_length", "Season Length (s)", 10, 300, 10, ".0f", "Environment"),
     SettingDef("season_min_rate", "Season Min Rate", 0.0, 1.0, 0.05, ".2f", "Environment"),
     SettingDef("biome_count", "Biome Count", 0, 10, 1, ".0f", "Environment"),
+    SettingDef("world_wrap", "World Wrap", 0, 1, 1, ".0f", "Environment", widget_type="toggle"),
     # Day/Night
     SettingDef("day_night_cycle_length", "Day/Night Cycle (s)", 10, 300, 10, ".0f", "Environment"),
     SettingDef("night_vision_multiplier", "Night Vision", 0.0, 1.0, 0.05, ".2f", "Environment"),

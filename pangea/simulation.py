@@ -328,6 +328,12 @@ class Simulation:
                             self.tools.select_tool(TOOL_LIST[tool_idx])
 
                 # Mouse events for player tools (isolation mode only)
+                # Right-click to inspect creature (any mode)
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                    mx, my = event.pos
+                    if not self.renderer.try_select_creature(world, mx, my):
+                        self.renderer.deselect_creature()
+
                 if mode == "isolation":
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         mx, my = event.pos
@@ -342,6 +348,10 @@ class Simulation:
                                 if tx <= mx <= tx + btn_w:
                                     self.tools.select_tool(tool)
                                     break
+                        elif self.tools.active_tool == "none":
+                            # No tool active — try to select a creature
+                            if not self.renderer.try_select_creature(world, mx, my):
+                                self.renderer.deselect_creature()
                         else:
                             # World click — use active tool
                             food_positions = self.tools.on_mouse_down(mx, my)
@@ -351,6 +361,12 @@ class Simulation:
                     if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                         mx, my = event.pos
                         self.tools.on_mouse_up(mx, my)
+
+                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    # Convergence mode — left-click to inspect
+                    mx, my = event.pos
+                    if not self.renderer.try_select_creature(world, mx, my):
+                        self.renderer.deselect_creature()
 
             # Update simulation (skip if paused)
             if not self.paused:
@@ -372,6 +388,7 @@ class Simulation:
             )
             if self.debug_mode:
                 self.renderer.draw_debug(world)
+            self.renderer.draw_creature_stats(world, mode)
             if self.show_evolution_panel:
                 self.renderer.draw_evolution_panel(
                     world, mode, self.generation_history,

@@ -506,6 +506,9 @@ class Menu:
                             if name == "settings" and settings is not None:
                                 settings = self.show_settings(settings)
                                 continue
+                            if name == "restart":
+                                if not self._show_confirm("Restart simulation?", "All progress will be lost."):
+                                    continue
                             return (name, settings)
 
             overlay = pygame.Surface((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.SRCALPHA)
@@ -627,6 +630,68 @@ class Menu:
         pygame.draw.circle(self.surface, (220, 225, 235), (knob_x, y + h // 2), 8)
         label = self.font_small.render("ON" if on else "OFF", True, (180, 190, 210))
         self.surface.blit(label, (x + w + 8, y + 2))
+
+    def _show_confirm(self, title: str, subtitle: str = "") -> bool:
+        """Show a confirmation dialog. Returns True if confirmed, False if cancelled."""
+        cx = config.WINDOW_WIDTH // 2
+        cy = config.WINDOW_HEIGHT // 2
+        btn_w, btn_h = 140, 45
+
+        yes_btn = Button(
+            cx - btn_w - 15, cy + 40, btn_w, btn_h, "Yes, Restart",
+            color=(120, 50, 50), hover_color=(160, 65, 65),
+        )
+        no_btn = Button(
+            cx + 15, cy + 40, btn_w, btn_h, "Cancel",
+            color=(50, 60, 80), hover_color=(70, 80, 110),
+        )
+        clock = pygame.time.Clock()
+
+        while True:
+            mouse_pos = pygame.mouse.get_pos()
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return False
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        return False
+                    if event.key == pygame.K_RETURN:
+                        return True
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if yes_btn.is_clicked(mouse_pos):
+                        return True
+                    if no_btn.is_clicked(mouse_pos):
+                        return False
+
+            # Dark overlay
+            overlay = pygame.Surface((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))
+            self.surface.blit(overlay, (0, 0))
+
+            # Dialog box
+            dialog_w, dialog_h = 400, 160
+            dialog_rect = pygame.Rect(cx - dialog_w // 2, cy - dialog_h // 2, dialog_w, dialog_h)
+            pygame.draw.rect(self.surface, (25, 28, 40), dialog_rect, border_radius=8)
+            pygame.draw.rect(self.surface, (80, 90, 120), dialog_rect, 2, border_radius=8)
+
+            # Title
+            title_surf = self.font_heading.render(title, True, (255, 200, 100))
+            self.surface.blit(title_surf, title_surf.get_rect(center=(cx, cy - 30)))
+
+            # Subtitle
+            if subtitle:
+                sub_surf = self.font_small.render(subtitle, True, (160, 160, 180))
+                self.surface.blit(sub_surf, sub_surf.get_rect(center=(cx, cy + 5)))
+
+            # Buttons
+            yes_btn.update(mouse_pos)
+            yes_btn.draw(self.surface, self.font)
+            no_btn.update(mouse_pos)
+            no_btn.draw(self.surface, self.font)
+
+            pygame.display.flip()
+            clock.tick(30)
 
     def _show_message(self, *lines: str) -> None:
         """Show a simple message screen until ESC is pressed."""
