@@ -702,6 +702,124 @@ class Menu:
             pygame.display.flip()
             clock.tick(30)
 
+    # ── Color Picker ──────────────────────────────────────────
+
+    def _show_color_picker(self, prompt: str, initial: tuple[int, int, int]) -> tuple[int, int, int] | None:
+        """Show an RGB color picker dialog. Returns (r,g,b) or None if cancelled."""
+        clock = pygame.time.Clock()
+        r, g, b = initial
+        dragging: str | None = None  # "r", "g", or "b"
+
+        while True:
+            mouse_pos = pygame.mouse.get_pos()
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return None
+                if self._handle_window_event(event):
+                    continue
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        return None
+                    if event.key == pygame.K_RETURN:
+                        return (r, g, b)
+                if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    dragging = None
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = mouse_pos
+                    cx = config.WINDOW_WIDTH // 2
+                    cy = config.WINDOW_HEIGHT // 2
+                    bar_x = cx - 120
+                    bar_w = 240
+                    for idx, ch in enumerate(("r", "g", "b")):
+                        bar_y = cy - 20 + idx * 36
+                        if pygame.Rect(bar_x, bar_y, bar_w, 20).collidepoint(mx, my):
+                            dragging = ch
+                            break
+                    # OK button
+                    ok_rect = pygame.Rect(cx - 75, cy + 100, 70, 32)
+                    if ok_rect.collidepoint(mx, my):
+                        return (r, g, b)
+                    # Cancel button
+                    cancel_rect = pygame.Rect(cx + 5, cy + 100, 70, 32)
+                    if cancel_rect.collidepoint(mx, my):
+                        return None
+
+            # Handle dragging
+            if dragging is not None:
+                cx = config.WINDOW_WIDTH // 2
+                bar_x = cx - 120
+                bar_w = 240
+                t = max(0.0, min(1.0, (mouse_pos[0] - bar_x) / bar_w))
+                val = int(t * 255)
+                if dragging == "r":
+                    r = val
+                elif dragging == "g":
+                    g = val
+                else:
+                    b = val
+
+            # Draw
+            overlay = pygame.Surface((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))
+            self.surface.blit(overlay, (0, 0))
+
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
+            dialog_w, dialog_h = 360, 260
+            dialog_rect = pygame.Rect(cx - dialog_w // 2, cy - dialog_h // 2, dialog_w, dialog_h)
+            pygame.draw.rect(self.surface, (25, 28, 40), dialog_rect, border_radius=8)
+            pygame.draw.rect(self.surface, (80, 90, 120), dialog_rect, 2, border_radius=8)
+
+            # Title
+            title_surf = self.font_heading.render(prompt, True, (180, 190, 220))
+            self.surface.blit(title_surf, title_surf.get_rect(center=(cx, cy - 95)))
+
+            # Color preview
+            preview_rect = pygame.Rect(cx - 30, cy - 75, 60, 30)
+            pygame.draw.rect(self.surface, (r, g, b), preview_rect, border_radius=4)
+            pygame.draw.rect(self.surface, (100, 105, 120), preview_rect, 1, border_radius=4)
+
+            # RGB sliders
+            bar_x = cx - 120
+            bar_w = 240
+            channels = [("R", r, (200, 60, 60)), ("G", g, (60, 180, 60)), ("B", b, (60, 80, 200))]
+            for idx, (label, val, bar_color) in enumerate(channels):
+                bar_y = cy - 20 + idx * 36
+                # Label
+                lbl = self.font_small.render(label, True, (150, 155, 175))
+                self.surface.blit(lbl, (bar_x - 24, bar_y + 2))
+                # Track
+                pygame.draw.rect(self.surface, (35, 35, 50), (bar_x, bar_y, bar_w, 20), border_radius=6)
+                fill = int(bar_w * val / 255)
+                if fill > 0:
+                    pygame.draw.rect(self.surface, bar_color, (bar_x, bar_y, fill, 20), border_radius=6)
+                # Thumb
+                pygame.draw.circle(self.surface, (220, 225, 235), (bar_x + fill, bar_y + 10), 8)
+                # Value
+                val_surf = self.font_small.render(str(val), True, (160, 170, 190))
+                self.surface.blit(val_surf, (bar_x + bar_w + 10, bar_y + 2))
+
+            # OK / Cancel buttons
+            ok_rect = pygame.Rect(cx - 75, cy + 100, 70, 32)
+            ok_h = ok_rect.collidepoint(mouse_pos)
+            pygame.draw.rect(self.surface, (40, 80, 55) if ok_h else (30, 60, 42), ok_rect, border_radius=5)
+            self.surface.blit(self.font_small.render("OK", True, (180, 220, 190)),
+                              self.font_small.render("OK", True, (180, 220, 190)).get_rect(center=ok_rect.center))
+
+            cancel_rect = pygame.Rect(cx + 5, cy + 100, 70, 32)
+            ch = cancel_rect.collidepoint(mouse_pos)
+            pygame.draw.rect(self.surface, (70, 45, 45) if ch else (55, 35, 35), cancel_rect, border_radius=5)
+            self.surface.blit(self.font_small.render("Cancel", True, (200, 160, 160)),
+                              self.font_small.render("Cancel", True, (200, 160, 160)).get_rect(center=cancel_rect.center))
+
+            # Hint
+            hint = self.font_small.render("Enter to confirm, Esc to cancel", True, (90, 95, 110))
+            self.surface.blit(hint, hint.get_rect(center=(cx, cy + 145)))
+
+            pygame.display.flip()
+            clock.tick(30)
+
     # ── Species Editor ─────────────────────────────────────────
 
     # Species slider definitions: (attr_name, label, min, max, step, fmt, target, tooltip)
@@ -876,6 +994,14 @@ class Menu:
                                 sp.name = new_name
                             break
 
+                        # Color swatch button
+                        color_rect = pygame.Rect(card_x + card_w - 210, y_pos + 6, 60, 22)
+                        if color_rect.collidepoint(mx, my):
+                            new_color = self._show_color_picker("Species Color", sp.color)
+                            if new_color is not None:
+                                sp.color = new_color
+                            break
+
                         # Enabled toggle
                         enabled_rect = pygame.Rect(card_x + 16, y_pos + 30, 50, 20)
                         if enabled_rect.collidepoint(mx, my):
@@ -998,7 +1124,18 @@ class Menu:
                 ids = self.font_small.render(f"({sp.id})", True, (90, 95, 115))
                 self.surface.blit(ids, (card_x + 18 + ns.get_width() + 6, y_pos + 10))
 
-                # Rename/Delete buttons
+                # Color/Rename/Delete buttons
+                color_rect = pygame.Rect(card_x + card_w - 210, y_pos + 6, 60, 22)
+                clh = color_rect.collidepoint(mouse_pos)
+                pygame.draw.rect(self.surface, (50, 55, 75) if clh else (35, 38, 52), color_rect, border_radius=4)
+                # Color swatch preview inside the button
+                swatch_rect = pygame.Rect(color_rect.x + 4, color_rect.y + 4, 14, 14)
+                pygame.draw.rect(self.surface, sp.color, swatch_rect, border_radius=3)
+                clabel = self.font_small.render("Color", True, (160, 165, 185))
+                self.surface.blit(clabel, (color_rect.x + 22, color_rect.y + 3))
+                if clh:
+                    hovered_tooltip = "Change the display color of this species."
+
                 rename_rect = pygame.Rect(card_x + card_w - 140, y_pos + 6, 60, 22)
                 rh = rename_rect.collidepoint(mouse_pos)
                 pygame.draw.rect(self.surface, (50, 55, 75) if rh else (35, 38, 52), rename_rect, border_radius=4)
