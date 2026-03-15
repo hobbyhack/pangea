@@ -440,3 +440,92 @@ def load_snapshot(filepath: str) -> dict:
         "tools_zones": zones,
         "tools_barriers": barriers,
     }
+
+
+# ── Community / DNA Exchange ──────────────────────────────────
+
+def upload_species(filepath: str, server_url: str) -> dict:
+    """
+    Upload a species file to the DNA Exchange API.
+
+    Args:
+        filepath:   Path to the local .json species file.
+        server_url: Base URL of the API (e.g. "http://localhost:8000").
+
+    Returns:
+        Server response dict with keys: id, name, token.
+    """
+    import urllib.request
+    import urllib.error
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    payload = json.dumps({
+        "species_name": data.get("species_name", ""),
+        "generation": data.get("generation", 0),
+        "creatures": data.get("creatures", []),
+    }).encode("utf-8")
+
+    url = f"{server_url.rstrip('/')}/species"
+    req = urllib.request.Request(
+        url, data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def download_species(
+    species_id: int | str,
+    server_url: str,
+    save_dir: str = "species",
+) -> str:
+    """
+    Download a species from the DNA Exchange API and save it locally.
+
+    Args:
+        species_id: The ID of the species to download.
+        server_url: Base URL of the API.
+        save_dir:   Local directory to save the file.
+
+    Returns:
+        The local filepath where the species was saved.
+    """
+    import urllib.request
+
+    url = f"{server_url.rstrip('/')}/species/{species_id}"
+    with urllib.request.urlopen(url) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+
+    os.makedirs(save_dir, exist_ok=True)
+    name = data.get("species_name", f"species_{species_id}")
+    # Sanitize filename
+    safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+    filepath = os.path.join(save_dir, f"{safe_name}_{species_id}.json")
+
+    save_data = {
+        "species_name": data.get("species_name", name),
+        "generation": data.get("generation", 0),
+        "creatures": data.get("creatures", []),
+    }
+    with open(filepath, "w", encoding="utf-8") as f:
+        json.dump(save_data, f, indent=2)
+
+    return filepath
+
+
+def list_remote_species(server_url: str, page: int = 1) -> list[dict]:
+    """
+    Fetch the species list from the DNA Exchange API.
+
+    Returns:
+        List of dicts with keys: id, name, generation, wins, losses.
+    """
+    import urllib.request
+
+    url = f"{server_url.rstrip('/')}/species?page={page}"
+    with urllib.request.urlopen(url) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return data.get("species", [])

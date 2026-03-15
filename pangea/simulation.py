@@ -29,6 +29,7 @@ import pangea.config as config
 from pangea.config import (
     CREATURES_PER_LINEAGE,
     FPS,
+    NET_SNAPSHOT_INTERVAL,
 )
 from pangea.creature import Creature
 from pangea.dna import DNA
@@ -44,6 +45,18 @@ from pangea.save_load import (
 )
 from pangea.settings import SimSettings
 from pangea.settings_panel import SettingsPanel
+from pangea.network import NetworkClient, NetworkHost
+from pangea.server import EmbeddedRelay
+from pangea.protocol import (
+    MsgType,
+    apply_full_state,
+    apply_snapshot,
+    full_state_from_world,
+    generation_end_msg,
+    snapshot_from_world,
+    tool_action_msg,
+    settings_change_msg,
+)
 from pangea.tools import TOOL_LIST, PlayerTools
 from pangea.world import World
 
@@ -75,6 +88,9 @@ class Simulation:
         self.tools = PlayerTools()
         self.settings_panel = SettingsPanel()
         self._active_world: World | None = None
+        self._net_host: NetworkHost | None = None
+        self._net_client: NetworkClient | None = None
+        self._embedded_relay: EmbeddedRelay | None = None
 
     def _rebuild_display(self) -> None:
         """Update config, renderer, and menu after a screen size change."""
@@ -178,6 +194,88 @@ class Simulation:
                             self._run_freeplay(
                                 loaded_dna=save_data["creatures"],
                             )
+                self._active_world = None
+
+            elif choice == "host":
+                result = self.menu.show_host_setup(self.settings)
+                if result is None:
+                    continue
+                sub_mode, relay_url, self.settings = result
+                self.menu.show_connecting("Starting server...")
+
+                # Extract port from relay URL for the embedded server
+                import re
+                port_match = re.search(r":(\d+)$", relay_url)
+                relay_port = int(port_match.group(1)) if port_match else 8765
+
+                # Start embedded relay server automatically
+                try:
+                    self._embedded_relay = EmbeddedRelay("127.0.0.1", relay_port)
+                    self._embedded_relay.start()
+                except Exception as exc:
+                    self.menu.show_error(f"Failed to start relay: {exc}")
+                    self._embedded_relay = None
+                    continue
+
+                self.menu.show_connecting("Creating room...")
+                try:
+                    self._net_host = NetworkHost(relay_url)
+                    room_code = self._net_host.start()
+                except Exception as exc:
+                    self.menu.show_error(f"Failed to host: {exc}")
+                    self._net_host = None
+                    if self._embedded_relay:
+                        self._embedded_relay.stop()
+                        self._embedded_relay = None
+                    continue
+
+                # Waiting room loop
+                waiting = True
+                start_game = False
+                while waiting:
+                    wr = self.menu.show_waiting_room(
+                        room_code, self._net_host.player_count
+                    )
+                    if wr == "start":
+                        start_game = True
+                        waiting = False
+                    elif wr == "cancel":
+                        waiting = False
+                    self.clock.tick(30)
+
+                if start_game:
+                    if sub_mode == "isolation":
+                        self._run_host_isolation()
+                    elif sub_mode == "freeplay":
+                        self._run_host_freeplay()
+
+                if self._net_host:
+                    self._net_host.stop()
+                    self._net_host = None
+                if self._embedded_relay:
+                    self._embedded_relay.stop()
+                    self._embedded_relay = None
+                self._active_world = None
+
+            elif choice == "join":
+                result = self.menu.show_join_dialog()
+                if result is None:
+                    continue
+                room_code, relay_url = result
+                self.menu.show_connecting("Joining room...")
+                try:
+                    self._net_client = NetworkClient(relay_url, room_code)
+                    self._net_client.start()
+                except Exception as exc:
+                    self.menu.show_error(f"Failed to join: {exc}")
+                    self._net_client = None
+                    continue
+
+                self._run_client()
+
+                if self._net_client:
+                    self._net_client.stop()
+                    self._net_client = None
                 self._active_world = None
 
         pygame.quit()
@@ -952,6 +1050,698 @@ class Simulation:
             pygame.display.flip()
 
         return "done"
+
+    # ── Host Mode (Isolation) ────────────────────────────────
+
+    def _run_host_isolation(self) -> None:
+        """Run isolation mode as network host, broadcasting state to clients."""
+        self.tools = PlayerTools()
+        self.generation_history.clear()
+        pop = self.settings.population_size
+        dna_list = [DNA.random() for _ in range(pop)]
+        world = self._create_world(dna_list)
+        generation = 1
+        world.generation = generation
+        frame_counter = 0
+
+        while self.running:
+            if (self.settings.max_generations > 0
+                    and generation > self.settings.max_generations):
+                return
+
+            # Run one generation
+            result = self._run_host_generation(world, "isolation", frame_counter)
+            frame_counter = result[1] if isinstance(result, tuple) else frame_counter
+
+            action = result[0] if isinstance(result, tuple) else result
+            if action in ("main_menu", "save_quit"):
+                if action == "save_quit":
+                    top_dna = select_top(world.creatures, self.settings.top_performers_count, self.settings)
+                    save_game(
+                        mode="isolation", dna_list=top_dna,
+                        generation=generation, settings_dict=self.settings.to_dict(),
+                    )
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filepath = f"species/species_{timestamp}.json"
+                    save_species(top_dna, filepath, generation=generation)
+                return
+            elif action == "restart":
+                self.tools.reset()
+                self.generation_history.clear()
+                dna_list = [DNA.random() for _ in range(pop)]
+                world = self._create_world(dna_list)
+                generation = 1
+                world.generation = generation
+                self.renderer.reset_tracking()
+                frame_counter = 0
+                continue
+
+            # Evolve to next generation
+            top_dna = select_top(world.creatures, self.settings.top_performers_count, self.settings)
+            fitnesses = [evaluate_fitness(c, self.settings) for c in world.creatures]
+            best = max(fitnesses)
+            avg = sum(fitnesses) / len(fitnesses) if fitnesses else 0
+
+            all_creatures = world.creatures
+            n_creatures = len(all_creatures)
+            alive = [c for c in all_creatures if c.alive]
+            self.generation_history.append({
+                "gen": generation,
+                "avg_speed": sum(c.dna.speed for c in all_creatures) / n_creatures,
+                "avg_size": sum(c.dna.size for c in all_creatures) / n_creatures,
+                "avg_vision": sum(c.dna.vision for c in all_creatures) / n_creatures,
+                "avg_efficiency": sum(c.dna.efficiency for c in all_creatures) / n_creatures,
+                "avg_lifespan": sum(c.dna.lifespan for c in all_creatures) / n_creatures,
+                "avg_food": sum(c.food_eaten for c in all_creatures) / n_creatures,
+                "alive_pct": len(alive) / n_creatures * 100,
+                "herbivores": sum(1 for c in all_creatures if c.dna.diet == 0),
+                "carnivores": sum(1 for c in all_creatures if c.dna.diet == 1),
+                "scavengers": sum(1 for c in all_creatures if c.dna.diet == 2),
+            })
+
+            # Broadcast generation end to clients
+            if self._net_host:
+                stats = self.generation_history[-1]
+                top_dna_dicts = [d.to_dict() for d in top_dna]
+                self._net_host.send_to_clients(
+                    generation_end_msg(generation, top_dna_dicts, stats)
+                )
+
+            self.renderer.draw_generation_stats(world, best, avg, mode="isolation")
+            pygame.display.flip()
+            pygame.time.wait(1500)
+
+            generation += 1
+            dna_list = create_next_generation(
+                top_dna, population_size=pop,
+                mutation_rate=self.settings.mutation_rate,
+                mutation_strength=self.settings.mutation_strength,
+                crossover_rate=self.settings.crossover_rate,
+                min_parents=self.settings.min_population,
+                weight_clamp=self.settings.weight_clamp,
+                trait_mutation_range=self.settings.trait_mutation_range,
+            )
+            world = self._create_world(dna_list)
+            world.generation = generation
+            self.renderer.reset_tracking()
+
+    def _run_host_generation(
+        self, world: World, mode: str, frame_counter: int,
+    ) -> tuple[str, int]:
+        """
+        Run a single generation as host — same as _run_generation but with
+        network broadcasting and remote tool action processing.
+        """
+        self.paused = False
+        show_toolbar = True
+
+        while not world.is_generation_over():
+            dt = self.clock.tick(FPS) / 1000.0
+            dt = min(dt, 0.05)
+            frame_counter += 1
+
+            # Process remote tool actions from clients
+            if self._net_host:
+                for msg in self._net_host.poll_incoming():
+                    self._apply_remote_action(msg, world)
+
+            # Handle local events (same as _run_generation)
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                    return ("main_menu", frame_counter)
+
+                if event.type == pygame.VIDEORESIZE:
+                    self._handle_resize(event.w, event.h)
+                    continue
+
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
+                    self.settings_panel.toggle()
+                    continue
+
+                if self.settings_panel.visible:
+                    self.settings = self.settings_panel.handle_event(event, self.settings)
+                    if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEWHEEL):
+                        if self.settings_panel.consumes_click(*pygame.mouse.get_pos()):
+                            continue
+
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_F11:
+                        self._toggle_fullscreen()
+                    elif event.key == pygame.K_F10:
+                        self._toggle_maximized()
+                    elif event.key == pygame.K_SPACE:
+                        self.paused = not self.paused
+                    elif event.key == pygame.K_f:
+                        self.fast_forward = not self.fast_forward
+                    elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                        self.fast_forward_multiplier = min(20, self.fast_forward_multiplier + 1)
+                    elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                        self.fast_forward_multiplier = max(2, self.fast_forward_multiplier - 1)
+                    elif event.key == pygame.K_d:
+                        self.debug_mode = not self.debug_mode
+                    elif event.key == pygame.K_e:
+                        self.show_evolution_panel = not self.show_evolution_panel
+                    elif event.key == pygame.K_ESCAPE:
+                        if self.settings_panel.visible:
+                            self.settings_panel.visible = False
+                        else:
+                            pause_result, self.settings = self.menu.show_pause_menu(
+                                mode, self.settings
+                            )
+                            if pause_result == "resume":
+                                self.paused = False
+                            elif pause_result in ("save_quit", "main_menu", "restart"):
+                                return (pause_result, frame_counter)
+                    elif pygame.K_1 <= event.key <= pygame.K_6:
+                        tool_idx = event.key - pygame.K_1
+                        if tool_idx < len(TOOL_LIST):
+                            self.tools.select_tool(TOOL_LIST[tool_idx])
+
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                    mx, my = event.pos
+                    if not self.settings_panel.consumes_click(mx, my):
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        if not self.renderer.try_select_creature(world, wmx, wmy):
+                            self.renderer.deselect_creature()
+
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = event.pos
+                    if self.settings_panel.consumes_click(mx, my):
+                        continue
+                    toolbar_x = config.WINDOW_WIDTH - 380
+                    if my < 75 and mx > toolbar_x:
+                        btn_w = 58
+                        gap = 4
+                        for i, tool in enumerate(TOOL_LIST):
+                            tx = toolbar_x + i * (btn_w + gap)
+                            if tx <= mx <= tx + btn_w:
+                                self.tools.select_tool(tool)
+                                break
+                    elif self.tools.active_tool == "none":
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        if not self.renderer.try_select_creature(world, wmx, wmy):
+                            self.renderer.deselect_creature()
+                    else:
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        food_positions = self.tools.on_mouse_down(wmx, wmy)
+                        for fx, fy in food_positions:
+                            world.add_food_at(fx, fy)
+
+                if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    mx, my = event.pos
+                    wmx, wmy = self._screen_to_world(mx, my)
+                    self.tools.on_mouse_up(wmx, wmy)
+
+            self.settings = self.settings_panel.update_dragging(self.settings)
+
+            if not self.paused:
+                if self.fast_forward:
+                    for _ in range(self.fast_forward_multiplier):
+                        world.update(dt)
+                        if world.is_generation_over():
+                            break
+                else:
+                    world.update(dt)
+
+            # Broadcast snapshot every N frames
+            if self._net_host and frame_counter % NET_SNAPSHOT_INTERVAL == 0:
+                self._net_host.broadcast_snapshot(snapshot_from_world(world))
+
+            # Render
+            self.renderer.draw(
+                world, mode, self.paused, tools=self.tools,
+                show_toolbar=show_toolbar,
+                fast_forward=self.fast_forward_multiplier if self.fast_forward else 0,
+                debug=self.debug_mode,
+            )
+            self.renderer.draw_creature_stats(world, mode)
+            if self.show_evolution_panel:
+                self.renderer.draw_evolution_panel(world, mode, self.generation_history)
+            if self.tools.active_tool != "none":
+                self.renderer.draw_tool_cursor(self.tools)
+            self.settings_panel.draw(self.screen, self.settings, dt)
+            pygame.display.flip()
+
+        return ("done", frame_counter)
+
+    # ── Host Mode (Freeplay) ─────────────────────────────────
+
+    def _run_host_freeplay(self) -> None:
+        """Run freeplay mode as network host."""
+        self.tools = PlayerTools()
+        pop = self.settings.freeplay_initial_population
+        dna_list = [DNA.random() for _ in range(pop)]
+        world = self._create_world(dna_list)
+        world.freeplay = True
+        world.generation = 0
+
+        self._freeplay_elapsed = 0.0
+        self._freeplay_last_births = 0
+        self._freeplay_last_deaths = 0
+        self._freeplay_births_per_min = 0.0
+        self._freeplay_deaths_per_min = 0.0
+        self._freeplay_stats_timer = 0.0
+        self._freeplay_peak_pop = len(dna_list)
+        self._freeplay_history: list[dict] = []
+        self._freeplay_history_timer = 0.0
+        frame_counter = 0
+
+        # Send full state to any already-connected clients
+        if self._net_host:
+            self._net_host.broadcast_full_state(
+                full_state_from_world(world, self.settings, self.tools, "freeplay", 0)
+            )
+
+        while self.running:
+            dt = self.clock.tick(FPS) / 1000.0
+            dt = min(dt, 0.05)
+            frame_counter += 1
+
+            # Process remote actions
+            if self._net_host:
+                for msg in self._net_host.poll_incoming():
+                    self._apply_remote_action(msg, world)
+
+            # Handle local events (identical to _run_freeplay)
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                    return
+                if event.type == pygame.VIDEORESIZE:
+                    self._handle_resize(event.w, event.h)
+                    continue
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
+                    self.settings_panel.toggle()
+                    continue
+                if self.settings_panel.visible:
+                    self.settings = self.settings_panel.handle_event(event, self.settings)
+                    if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEWHEEL):
+                        if self.settings_panel.consumes_click(*pygame.mouse.get_pos()):
+                            continue
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_F11:
+                        self._toggle_fullscreen()
+                    elif event.key == pygame.K_F10:
+                        self._toggle_maximized()
+                    elif event.key == pygame.K_SPACE:
+                        self.paused = not self.paused
+                    elif event.key == pygame.K_f:
+                        self.fast_forward = not self.fast_forward
+                    elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                        self.fast_forward_multiplier = min(20, self.fast_forward_multiplier + 1)
+                    elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                        self.fast_forward_multiplier = max(2, self.fast_forward_multiplier - 1)
+                    elif event.key == pygame.K_d:
+                        self.debug_mode = not self.debug_mode
+                    elif event.key == pygame.K_e:
+                        self.show_evolution_panel = not self.show_evolution_panel
+                    elif event.key == pygame.K_ESCAPE:
+                        if self.settings_panel.visible:
+                            self.settings_panel.visible = False
+                        else:
+                            pause_result, self.settings = self.menu.show_pause_menu(
+                                "freeplay", self.settings,
+                            )
+                            if pause_result == "resume":
+                                self.paused = False
+                            elif pause_result == "main_menu":
+                                return
+                            elif pause_result == "save_quit":
+                                freeplay_state = {
+                                    "elapsed": self._freeplay_elapsed,
+                                    "peak_pop": self._freeplay_peak_pop,
+                                    "last_births": self._freeplay_last_births,
+                                    "last_deaths": self._freeplay_last_deaths,
+                                    "births_per_min": self._freeplay_births_per_min,
+                                    "deaths_per_min": self._freeplay_deaths_per_min,
+                                    "history": self._freeplay_history,
+                                }
+                                save_snapshot(
+                                    world=world, settings_dict=self.settings.to_dict(),
+                                    freeplay_state=freeplay_state, tools=self.tools,
+                                )
+                                return
+                            elif pause_result == "restart":
+                                self.tools.reset()
+                                dna_list = [DNA.random() for _ in range(pop)]
+                                world = self._create_world(dna_list)
+                                world.freeplay = True
+                                world.generation = 0
+                                self._freeplay_elapsed = 0.0
+                                self._freeplay_peak_pop = len(dna_list)
+                                self._freeplay_history.clear()
+                                self._freeplay_history_timer = 0.0
+                                self._freeplay_last_births = 0
+                                self._freeplay_last_deaths = 0
+                                self._freeplay_births_per_min = 0.0
+                                self._freeplay_deaths_per_min = 0.0
+                                self._freeplay_stats_timer = 0.0
+                                self.renderer.reset_tracking()
+                                frame_counter = 0
+                                continue
+                    elif pygame.K_1 <= event.key <= pygame.K_6:
+                        tool_idx = event.key - pygame.K_1
+                        if tool_idx < len(TOOL_LIST):
+                            self.tools.select_tool(TOOL_LIST[tool_idx])
+
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                    mx, my = event.pos
+                    if not self.settings_panel.consumes_click(mx, my):
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        if not self.renderer.try_select_creature(world, wmx, wmy):
+                            self.renderer.deselect_creature()
+
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = event.pos
+                    if self.settings_panel.consumes_click(mx, my):
+                        continue
+                    toolbar_x = config.WINDOW_WIDTH - 380
+                    if my < 75 and mx > toolbar_x:
+                        btn_w = 58
+                        gap = 4
+                        for i, tool in enumerate(TOOL_LIST):
+                            tx = toolbar_x + i * (btn_w + gap)
+                            if tx <= mx <= tx + btn_w:
+                                self.tools.select_tool(tool)
+                                break
+                    elif self.tools.active_tool == "none":
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        if not self.renderer.try_select_creature(world, wmx, wmy):
+                            self.renderer.deselect_creature()
+                    else:
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        food_positions = self.tools.on_mouse_down(wmx, wmy)
+                        for fx, fy in food_positions:
+                            world.add_food_at(fx, fy)
+
+                if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    mx, my = event.pos
+                    wmx, wmy = self._screen_to_world(mx, my)
+                    self.tools.on_mouse_up(wmx, wmy)
+
+            self.settings = self.settings_panel.update_dragging(self.settings)
+
+            if not self.paused:
+                if self.fast_forward:
+                    for _ in range(self.fast_forward_multiplier):
+                        world.update(dt)
+                        world.check_breeding()
+                else:
+                    world.update(dt)
+                    world.check_breeding()
+
+                self._freeplay_elapsed += dt
+                self._freeplay_stats_timer += dt
+                self._freeplay_history_timer += dt
+
+                if self._freeplay_stats_timer >= 5.0:
+                    world.remove_dead_creatures(min_dead_age=3.0)
+                    births_delta = world.total_births - self._freeplay_last_births
+                    deaths_delta = world.total_deaths - self._freeplay_last_deaths
+                    interval = self._freeplay_stats_timer
+                    self._freeplay_births_per_min = births_delta / interval * 60
+                    self._freeplay_deaths_per_min = deaths_delta / interval * 60
+                    world._freeplay_births_per_min = self._freeplay_births_per_min
+                    world._freeplay_deaths_per_min = self._freeplay_deaths_per_min
+                    self._freeplay_last_births = world.total_births
+                    self._freeplay_last_deaths = world.total_deaths
+                    self._freeplay_stats_timer = 0.0
+
+                if self._freeplay_history_timer >= 10.0:
+                    alive_creatures = [c for c in world.creatures if c.alive]
+                    n_alive = len(alive_creatures)
+                    self._freeplay_history.append({
+                        "time": self._freeplay_elapsed,
+                        "population": n_alive,
+                        "births": world.total_births,
+                        "deaths": world.total_deaths,
+                        "births_per_min": self._freeplay_births_per_min,
+                        "deaths_per_min": self._freeplay_deaths_per_min,
+                        "herbivores": sum(1 for c in alive_creatures if c.dna.diet == 0),
+                        "carnivores": sum(1 for c in alive_creatures if c.dna.diet == 1),
+                        "scavengers": sum(1 for c in alive_creatures if c.dna.diet == 2),
+                        "avg_gen": (
+                            sum(c.generation for c in alive_creatures) / n_alive
+                            if n_alive else 0
+                        ),
+                    })
+                    if len(self._freeplay_history) > 360:
+                        self._freeplay_history = self._freeplay_history[-360:]
+                    self._freeplay_history_timer = 0.0
+
+                alive = world.alive_count()
+                if alive > self._freeplay_peak_pop:
+                    self._freeplay_peak_pop = alive
+
+            # Extinction respawn
+            if world.alive_count() == 0 and not self.paused:
+                top_dna = select_top(
+                    world.creatures,
+                    min(self.settings.top_performers_count, len(world.creatures)),
+                    self.settings,
+                )
+                if top_dna:
+                    dna_list = create_next_generation(
+                        top_dna, population_size=pop,
+                        mutation_rate=self.settings.mutation_rate,
+                        mutation_strength=self.settings.mutation_strength,
+                        crossover_rate=self.settings.crossover_rate,
+                        min_parents=self.settings.min_population,
+                        weight_clamp=self.settings.weight_clamp,
+                        trait_mutation_range=self.settings.trait_mutation_range,
+                    )
+                else:
+                    dna_list = [DNA.random() for _ in range(pop)]
+                world = self._create_world(dna_list)
+                world.freeplay = True
+                world.generation = 0
+                self.renderer.reset_tracking()
+
+            # Broadcast snapshot
+            if self._net_host and frame_counter % NET_SNAPSHOT_INTERVAL == 0:
+                self._net_host.broadcast_snapshot(snapshot_from_world(world))
+
+            # Render
+            self.renderer.draw(
+                world, "freeplay", self.paused, tools=self.tools,
+                show_toolbar=True,
+                fast_forward=self.fast_forward_multiplier if self.fast_forward else 0,
+                debug=self.debug_mode,
+            )
+            self.renderer.draw_creature_stats(world, "freeplay")
+            if self.show_evolution_panel:
+                self.renderer.draw_evolution_panel(world, "freeplay", self._freeplay_history)
+            if self.tools.active_tool != "none":
+                self.renderer.draw_tool_cursor(self.tools)
+            self.settings_panel.draw(self.screen, self.settings, dt)
+            pygame.display.flip()
+
+    # ── Client Mode ──────────────────────────────────────────
+
+    def _run_client(self) -> None:
+        """Run as a network client — receive snapshots, send tool actions."""
+        assert self._net_client is not None
+
+        # Wait for full state from host
+        self.menu.show_connecting("Waiting for game state...")
+        world = None
+        mode = "isolation"
+        generation = 1
+        timeout = 30.0
+        wait_elapsed = 0.0
+
+        while world is None and wait_elapsed < timeout:
+            dt = self.clock.tick(30) / 1000.0
+            wait_elapsed += dt
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    return
+
+            for msg in self._net_client.poll_incoming():
+                if msg.get("t") == MsgType.FULL_STATE:
+                    world, self.settings, self.tools, mode, generation, self.generation_history = (
+                        apply_full_state(msg)
+                    )
+                    break
+                elif msg.get("t") == MsgType.SNAPSHOT:
+                    # Got a snapshot before full_state — create minimal world
+                    from pangea.dna import DNA as _DNA
+                    world = World([], settings=self.settings, tools=self.tools)
+                    self._active_world = world
+                    apply_snapshot(world, msg)
+                    break
+                elif msg.get("t") == MsgType.HOST_LEFT:
+                    self.menu.show_error("Host disconnected.")
+                    return
+
+            if not self._net_client.connected:
+                self.menu.show_error("Lost connection to server.")
+                return
+
+        if world is None:
+            self.menu.show_error("Timed out waiting for game state.")
+            return
+
+        self._active_world = world
+        self.tools = PlayerTools()
+
+        while self.running:
+            dt = self.clock.tick(FPS) / 1000.0
+
+            # Process network messages
+            for msg in self._net_client.poll_incoming():
+                msg_type = msg.get("t")
+                if msg_type == MsgType.SNAPSHOT:
+                    apply_snapshot(world, msg)
+                elif msg_type == MsgType.FULL_STATE:
+                    world, self.settings, self.tools, mode, generation, self.generation_history = (
+                        apply_full_state(msg)
+                    )
+                    self._active_world = world
+                elif msg_type == MsgType.GENERATION_END:
+                    generation = msg.get("generation", generation)
+                    stats = msg.get("stats")
+                    if stats:
+                        self.generation_history.append(stats)
+                elif msg_type == MsgType.HOST_LEFT:
+                    self.menu.show_error("Host disconnected.")
+                    return
+
+            if not self._net_client.connected:
+                self.menu.show_error("Lost connection to server.")
+                return
+
+            # Handle local events — tools send actions to host
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                    return
+                if event.type == pygame.VIDEORESIZE:
+                    self._handle_resize(event.w, event.h)
+                    continue
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_F11:
+                        self._toggle_fullscreen()
+                    elif event.key == pygame.K_F10:
+                        self._toggle_maximized()
+                    elif event.key == pygame.K_d:
+                        self.debug_mode = not self.debug_mode
+                    elif event.key == pygame.K_e:
+                        self.show_evolution_panel = not self.show_evolution_panel
+                    elif event.key == pygame.K_ESCAPE:
+                        return  # Disconnect and go to menu
+                    elif pygame.K_1 <= event.key <= pygame.K_6:
+                        tool_idx = event.key - pygame.K_1
+                        if tool_idx < len(TOOL_LIST):
+                            self.tools.select_tool(TOOL_LIST[tool_idx])
+
+                # Right-click to inspect creature locally
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                    mx, my = event.pos
+                    wmx, wmy = self._screen_to_world(mx, my)
+                    if not self.renderer.try_select_creature(world, wmx, wmy):
+                        self.renderer.deselect_creature()
+
+                # Left-click: toolbar or send tool action to host
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = event.pos
+                    toolbar_x = config.WINDOW_WIDTH - 380
+                    if my < 75 and mx > toolbar_x:
+                        btn_w = 58
+                        gap = 4
+                        for i, tool in enumerate(TOOL_LIST):
+                            tx = toolbar_x + i * (btn_w + gap)
+                            if tx <= mx <= tx + btn_w:
+                                self.tools.select_tool(tool)
+                                break
+                    elif self.tools.active_tool == "none":
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        if not self.renderer.try_select_creature(world, wmx, wmy):
+                            self.renderer.deselect_creature()
+                    else:
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        self._net_client.send_tool_action(
+                            tool_action_msg(self.tools.active_tool, wmx, wmy)
+                        )
+
+                if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    if self.tools.active_tool == "barrier":
+                        mx, my = event.pos
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        self._net_client.send_tool_action(
+                            tool_action_msg("mouse_up", wmx, wmy)
+                        )
+
+            # Render (no world.update — client is view-only)
+            self.renderer.draw(
+                world, mode, False, tools=self.tools,
+                show_toolbar=True,
+                fast_forward=0,
+                debug=self.debug_mode,
+            )
+            self.renderer.draw_creature_stats(world, mode)
+            if self.show_evolution_panel:
+                self.renderer.draw_evolution_panel(world, mode, self.generation_history)
+            if self.tools.active_tool != "none":
+                self.renderer.draw_tool_cursor(self.tools)
+            pygame.display.flip()
+
+    # ── Network Helpers ──────────────────────────────────────
+
+    def _apply_remote_action(self, msg: dict, world: World) -> None:
+        """Apply a remote client's action to the host's world."""
+        msg_type = msg.get("t")
+
+        if msg_type == MsgType.TOOL_ACTION:
+            tool = msg.get("tool", "")
+            x, y = msg.get("x", 0), msg.get("y", 0)
+
+            if tool == "mouse_up":
+                self.tools.on_mouse_up(x, y)
+            elif tool == "food":
+                # Temporarily set tool, apply, restore
+                prev = self.tools.active_tool
+                self.tools.active_tool = "food"
+                food_positions = self.tools.on_mouse_down(x, y)
+                for fx, fy in food_positions:
+                    world.add_food_at(fx, fy)
+                self.tools.active_tool = prev
+            elif tool == "poison":
+                prev = self.tools.active_tool
+                self.tools.active_tool = "poison"
+                self.tools.on_mouse_down(x, y)
+                self.tools.active_tool = prev
+            elif tool == "bounty":
+                prev = self.tools.active_tool
+                self.tools.active_tool = "bounty"
+                self.tools.on_mouse_down(x, y)
+                self.tools.active_tool = prev
+            elif tool == "barrier":
+                prev = self.tools.active_tool
+                self.tools.active_tool = "barrier"
+                self.tools.on_mouse_down(x, y)
+                self.tools.active_tool = prev
+            elif tool == "drought":
+                self.tools.drought_active = not self.tools.drought_active
+
+        elif msg_type == MsgType.SETTINGS_CHANGE:
+            changes = msg.get("changes", {})
+            for k, v in changes.items():
+                if hasattr(self.settings, k):
+                    setattr(self.settings, k, v)
+
+        elif msg_type == MsgType.CLIENT_JOINED:
+            # Send full state to newly joined client
+            if self._net_host:
+                self._net_host.broadcast_full_state(
+                    full_state_from_world(
+                        world, self.settings, self.tools,
+                        "isolation", world.generation, self.generation_history,
+                    )
+                )
 
     # ── World Creation Helpers ───────────────────────────────
 

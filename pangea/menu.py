@@ -101,7 +101,7 @@ class Menu:
         cx = config.WINDOW_WIDTH // 2
         cy = config.WINDOW_HEIGHT // 2
         btn_w, btn_h = 280, 50
-        start_y = cy - 60
+        start_y = cy - 130
         return {
             "isolation": Button(cx - btn_w // 2, start_y, btn_w, btn_h, "Isolation Mode",
                                 color=(40, 70, 50), hover_color=(55, 100, 65)),
@@ -109,9 +109,13 @@ class Menu:
                                   color=(50, 45, 75), hover_color=(70, 60, 110)),
             "freeplay": Button(cx - btn_w // 2, start_y + 140, btn_w, btn_h, "Freeplay Mode",
                                color=(60, 55, 40), hover_color=(90, 80, 55)),
-            "settings": Button(cx - btn_w // 2, start_y + 210, btn_w, btn_h, "Settings",
+            "host": Button(cx - btn_w // 2, start_y + 210, btn_w, btn_h, "Host Game",
+                           color=(45, 65, 75), hover_color=(60, 90, 105)),
+            "join": Button(cx - btn_w // 2, start_y + 280, btn_w, btn_h, "Join Game",
+                           color=(55, 50, 70), hover_color=(75, 70, 100)),
+            "settings": Button(cx - btn_w // 2, start_y + 350, btn_w, btn_h, "Settings",
                                color=(55, 55, 65), hover_color=(75, 75, 90)),
-            "quit": Button(cx - btn_w // 2, start_y + 280, btn_w, btn_h, "Quit",
+            "quit": Button(cx - btn_w // 2, start_y + 420, btn_w, btn_h, "Quit",
                            color=(65, 40, 40), hover_color=(90, 50, 50)),
         }
 
@@ -996,6 +1000,201 @@ class Menu:
 
             pygame.display.flip()
             clock.tick(30)
+
+    # ── Multiplayer Menus ──────────────────────────────────────
+
+    def show_host_setup(self, settings: SimSettings) -> tuple[str, str, SimSettings] | None:
+        """
+        Show host game setup screen — pick sub-mode and relay URL.
+
+        Returns:
+            Tuple of (sub_mode, relay_url, settings) or None if cancelled.
+        """
+        from pangea.config import NET_DEFAULT_RELAY
+
+        clock = pygame.time.Clock()
+        frame = 0
+        relay_url = NET_DEFAULT_RELAY
+
+        cx = config.WINDOW_WIDTH // 2
+        cy = config.WINDOW_HEIGHT // 2
+        btn_w, btn_h = 240, 50
+
+        def _build_buttons():
+            nonlocal cx, cy
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
+            return {
+                "isolation": Button(cx - btn_w // 2, cy - 20, btn_w, btn_h, "Host Isolation",
+                                    color=(40, 70, 50), hover_color=(55, 100, 65)),
+                "freeplay": Button(cx - btn_w // 2, cy + 50, btn_w, btn_h, "Host Freeplay",
+                                   color=(60, 55, 40), hover_color=(90, 80, 55)),
+                "relay": Button(cx - btn_w // 2, cy + 130, btn_w, btn_h, "Change Relay URL",
+                                color=(55, 55, 65), hover_color=(75, 75, 90)),
+                "back": Button(cx - btn_w // 2, cy + 200, btn_w, btn_h, "Back",
+                               color=(65, 40, 40), hover_color=(90, 50, 50)),
+            }
+
+        buttons = _build_buttons()
+
+        while True:
+            mouse_pos = pygame.mouse.get_pos()
+            frame += 1
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return None
+                if self._handle_window_event(event):
+                    buttons = _build_buttons()
+                    continue
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    return None
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    for name, btn in buttons.items():
+                        if btn.is_clicked(mouse_pos):
+                            if name == "back":
+                                return None
+                            if name == "relay":
+                                new_url = self._show_text_input("Relay Server URL:", relay_url)
+                                if new_url:
+                                    relay_url = new_url
+                                buttons = _build_buttons()
+                            elif name in ("isolation", "freeplay"):
+                                return (name, relay_url, settings)
+
+            self._draw_menu_bg(frame)
+
+            title = self.font_heading.render("HOST GAME", True, (100, 180, 220))
+            self.surface.blit(title, title.get_rect(center=(cx, cy - 120)))
+
+            sub = self.font.render("Choose a mode to host:", True, (160, 170, 190))
+            self.surface.blit(sub, sub.get_rect(center=(cx, cy - 70)))
+
+            # Show current relay URL
+            url_text = self.font_small.render(f"Relay: {relay_url}", True, (120, 130, 150))
+            self.surface.blit(url_text, url_text.get_rect(center=(cx, cy + 110)))
+
+            for btn in buttons.values():
+                btn.update(mouse_pos)
+                btn.draw(self.surface, self.font)
+
+            pygame.display.flip()
+            clock.tick(30)
+
+    def show_join_dialog(self) -> tuple[str, str] | None:
+        """
+        Show join game dialog — enter room code and relay URL.
+
+        Returns:
+            Tuple of (room_code, relay_url) or None if cancelled.
+        """
+        from pangea.config import NET_DEFAULT_RELAY
+
+        # Get room code
+        room_code = self._show_text_input("Enter Room Code:")
+        if not room_code:
+            return None
+
+        room_code = room_code.strip().upper()
+
+        # Get relay URL (with default)
+        relay_url = self._show_text_input("Relay Server URL:", NET_DEFAULT_RELAY)
+        if not relay_url:
+            return None
+
+        return (room_code, relay_url.strip())
+
+    def show_waiting_room(self, room_code: str, player_count: int) -> str | None:
+        """
+        Show the waiting room screen while host waits for clients.
+
+        Called in a loop by simulation.py — returns immediately each frame.
+
+        Args:
+            room_code:    The room code to display.
+            player_count: Number of connected clients.
+
+        Returns:
+            "start" if Start pressed, "cancel" if cancelled, None to keep waiting.
+        """
+        mouse_pos = pygame.mouse.get_pos()
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return "cancel"
+            if self._handle_window_event(event):
+                continue
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return "cancel"
+                if event.key == pygame.K_RETURN and player_count > 0:
+                    return "start"
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                cx = config.WINDOW_WIDTH // 2
+                cy = config.WINDOW_HEIGHT // 2
+                # Start button area
+                start_rect = pygame.Rect(cx - 120, cy + 80, 110, 45)
+                cancel_rect = pygame.Rect(cx + 10, cy + 80, 110, 45)
+                if start_rect.collidepoint(mouse_pos) and player_count > 0:
+                    return "start"
+                if cancel_rect.collidepoint(mouse_pos):
+                    return "cancel"
+
+        # Draw
+        cx = config.WINDOW_WIDTH // 2
+        cy = config.WINDOW_HEIGHT // 2
+
+        self.surface.fill((20, 20, 35))
+
+        title = self.font_heading.render("WAITING FOR PLAYERS", True, (100, 180, 220))
+        self.surface.blit(title, title.get_rect(center=(cx, cy - 100)))
+
+        # Room code display (large)
+        code_text = self.font_title.render(room_code, True, (220, 230, 255))
+        self.surface.blit(code_text, code_text.get_rect(center=(cx, cy - 30)))
+
+        label = self.font_small.render("Room Code", True, (120, 130, 150))
+        self.surface.blit(label, label.get_rect(center=(cx, cy - 70)))
+
+        # Player count
+        count_text = self.font.render(
+            f"{player_count} player{'s' if player_count != 1 else ''} connected",
+            True, (160, 200, 160) if player_count > 0 else (160, 140, 140),
+        )
+        self.surface.blit(count_text, count_text.get_rect(center=(cx, cy + 30)))
+
+        # Start button
+        start_color = (40, 70, 50) if player_count > 0 else (40, 40, 40)
+        start_text_color = (220, 230, 240) if player_count > 0 else (100, 100, 100)
+        start_rect = pygame.Rect(cx - 120, cy + 80, 110, 45)
+        pygame.draw.rect(self.surface, start_color, start_rect, border_radius=6)
+        pygame.draw.rect(self.surface, (80, 90, 120), start_rect, 2, border_radius=6)
+        st = self.font.render("Start", True, start_text_color)
+        self.surface.blit(st, st.get_rect(center=start_rect.center))
+
+        # Cancel button
+        cancel_rect = pygame.Rect(cx + 10, cy + 80, 110, 45)
+        pygame.draw.rect(self.surface, (65, 40, 40), cancel_rect, border_radius=6)
+        pygame.draw.rect(self.surface, (80, 90, 120), cancel_rect, 2, border_radius=6)
+        ct = self.font.render("Cancel", True, (220, 230, 240))
+        self.surface.blit(ct, ct.get_rect(center=cancel_rect.center))
+
+        hint = self.font_small.render(
+            "Share the room code with other players", True, (100, 110, 130)
+        )
+        self.surface.blit(hint, hint.get_rect(center=(cx, cy + 150)))
+
+        pygame.display.flip()
+        return None
+
+    def show_connecting(self, message: str = "Connecting...") -> None:
+        """Show a simple 'connecting' screen."""
+        self.surface.fill((20, 20, 35))
+        cx = config.WINDOW_WIDTH // 2
+        cy = config.WINDOW_HEIGHT // 2
+        text = self.font_heading.render(message, True, (100, 180, 220))
+        self.surface.blit(text, text.get_rect(center=(cx, cy)))
+        pygame.display.flip()
 
     # ── Utility ──────────────────────────────────────────────
 
