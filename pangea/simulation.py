@@ -494,7 +494,7 @@ class Simulation:
         self._freeplay_births_per_min = 0.0
         self._freeplay_deaths_per_min = 0.0
         self._freeplay_stats_timer = 0.0
-        self._freeplay_peak_pop = pop
+        self._freeplay_peak_pop = len(dna_list)
         self._freeplay_history: list[dict] = []
         self._freeplay_history_timer = 0.0
 
@@ -576,7 +576,7 @@ class Simulation:
                                     world.freeplay = True
                                     world.generation = 0
                                     self._freeplay_elapsed = 0.0
-                                    self._freeplay_peak_pop = pop
+                                    self._freeplay_peak_pop = len(dna_list)
                                     self._freeplay_history.clear()
                                     self._freeplay_history_timer = 0.0
                                     self._freeplay_last_births = 0
