@@ -196,6 +196,9 @@ class World:
         self.settings = settings or SimSettings()
         self.tools = tools
         self.season_time = 0.0
+        self.freeplay = False  # Set True for continuous breeding mode
+        self.total_births = 0  # Freeplay birth counter
+        self.total_deaths = 0  # Freeplay death counter
 
         # Accumulator for fractional food spawning
         self._food_spawn_accum = 0.0
@@ -362,6 +365,13 @@ class World:
 
         # Apply seasonal multiplier
         multiplier *= self.seasonal_multiplier()
+
+        # Freeplay: reduce food when above carrying capacity
+        if self.freeplay:
+            alive = self.alive_count()
+            cap = self.settings.freeplay_carrying_capacity
+            if alive > cap:
+                multiplier *= self.settings.freeplay_overcapacity_food_penalty
 
         self._food_spawn_accum += self.settings.food_spawn_rate * multiplier * dt
         while self._food_spawn_accum >= 1.0:
@@ -690,6 +700,81 @@ class World:
             threshold > 0 and alive > 0 and alive <= threshold
         )
         return all_dead or time_up or below_threshold
+
+    # ── Freeplay Breeding ─────────────────────────────────────
+
+    def check_breeding(self) -> list[Creature]:
+        """
+        Check all living creatures for breeding eligibility.
+
+        Eligible creatures produce one mutated offspring nearby.
+        Returns list of newly spawned children.
+        """
+        from pangea.evolution import breed_creature
+
+        alive = self.alive_count()
+        hard_cap = self.settings.freeplay_hard_cap
+        if alive >= hard_cap:
+            return []
+
+        new_children: list[Creature] = []
+        for creature in list(self.creatures):
+            if not creature.can_breed(self.settings):
+                continue
+            if alive + len(new_children) >= hard_cap:
+                break
+
+            child_dna = breed_creature(
+                creature,
+                mutation_rate=self.settings.mutation_rate,
+                mutation_strength=self.settings.mutation_strength,
+                weight_clamp=self.settings.weight_clamp,
+                trait_mutation_range=self.settings.trait_mutation_range,
+            )
+
+            # Spawn child near parent
+            angle = random.uniform(0, 2 * math.pi)
+            dist = random.uniform(5, self.settings.freeplay_child_spawn_radius)
+            cx = creature.x + math.cos(angle) * dist
+            cy = creature.y + math.sin(angle) * dist
+            cx = max(10, min(self.width - 10, cx))
+            cy = max(10, min(self.height - 10, cy))
+
+            child = Creature(child_dna, cx, cy, lineage=creature.lineage)
+            child.energy = self.settings.freeplay_child_energy
+            child.generation = creature.generation + 1
+
+            # Deduct cost and set cooldown on parent
+            creature.energy -= self.settings.freeplay_breed_energy_cost
+            creature.breed_cooldown = self.settings.freeplay_breed_cooldown
+            creature.offspring_count += 1
+
+            new_children.append(child)
+
+        self.creatures.extend(new_children)
+        self.total_births += len(new_children)
+        return new_children
+
+    def remove_dead_creatures(self, min_dead_age: float = 3.0) -> None:
+        """
+        Remove creatures that have been dead for a while.
+
+        Keeps recently dead creatures so scavenger/corpse logic can process them.
+        """
+        kept: list[Creature] = []
+        removed = 0
+        for c in self.creatures:
+            if not c.alive:
+                # Keep if died recently (for scavenger detection)
+                time_dead = self.elapsed_time - c.age
+                if time_dead < min_dead_age:
+                    kept.append(c)
+                else:
+                    removed += 1
+            else:
+                kept.append(c)
+        self.total_deaths += removed
+        self.creatures = kept
 
     def alive_count(self) -> int:
         """Return the number of living creatures."""

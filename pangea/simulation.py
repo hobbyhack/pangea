@@ -96,6 +96,8 @@ class Simulation:
                 self._run_isolation()
             elif choice == "convergence":
                 self._run_convergence()
+            elif choice == "freeplay":
+                self._run_freeplay()
 
         pygame.quit()
 
@@ -290,6 +292,232 @@ class Simulation:
         self.menu.show_convergence_results(
             winner, a_total_food, b_total_food, a_survived_gens, b_survived_gens
         )
+
+    # ── Freeplay Mode ─────────────────────────────────────────
+
+    def _run_freeplay(self) -> None:
+        """Run continuous breeding mode — no generations, creatures breed in real time."""
+        self.tools = PlayerTools()
+        pop = self.settings.freeplay_initial_population
+        dna_list = [DNA.random() for _ in range(pop)]
+        world = self._create_world(dna_list)
+        world.freeplay = True
+        world.generation = 0
+
+        # Track rolling stats for the HUD
+        self._freeplay_elapsed = 0.0
+        self._freeplay_last_births = 0
+        self._freeplay_last_deaths = 0
+        self._freeplay_births_per_min = 0.0
+        self._freeplay_deaths_per_min = 0.0
+        self._freeplay_stats_timer = 0.0
+        self._freeplay_peak_pop = pop
+        self._freeplay_history: list[dict] = []
+        self._freeplay_history_timer = 0.0
+
+        while self.running:
+            dt = self.clock.tick(FPS) / 1000.0
+            dt = min(dt, 0.05)
+
+            # Handle events
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self.running = False
+                    return
+
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
+                    self.settings_panel.toggle()
+                    continue
+
+                if self.settings_panel.visible:
+                    self.settings = self.settings_panel.handle_event(event, self.settings)
+                    if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEWHEEL):
+                        if self.settings_panel.consumes_click(*pygame.mouse.get_pos()):
+                            continue
+
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_F11:
+                        self._toggle_fullscreen()
+                    elif event.key == pygame.K_SPACE:
+                        self.paused = not self.paused
+                    elif event.key == pygame.K_f:
+                        self.fast_forward = not self.fast_forward
+                    elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                        self.fast_forward_multiplier = min(20, self.fast_forward_multiplier + 1)
+                    elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                        self.fast_forward_multiplier = max(2, self.fast_forward_multiplier - 1)
+                    elif event.key == pygame.K_d:
+                        self.debug_mode = not self.debug_mode
+                    elif event.key == pygame.K_e:
+                        self.show_evolution_panel = not self.show_evolution_panel
+                    elif event.key == pygame.K_ESCAPE:
+                        if self.settings_panel.visible:
+                            self.settings_panel.visible = False
+                        else:
+                            pause_result, self.settings = self.menu.show_pause_menu(
+                                "freeplay", self.settings
+                            )
+                            if pause_result == "resume":
+                                self.paused = False
+                            elif pause_result == "save_quit":
+                                # Save all living creatures' DNA
+                                alive = [c for c in world.creatures if c.alive]
+                                if alive:
+                                    top_dna = [c.dna for c in sorted(
+                                        alive, key=lambda c: c.food_eaten, reverse=True,
+                                    )[:self.settings.top_performers_count]]
+                                    from datetime import datetime as _dt
+                                    timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+                                    filepath = f"species/freeplay_{timestamp}.json"
+                                    save_species(top_dna, filepath, generation=0)
+                                return
+                            elif pause_result in ("main_menu", "restart"):
+                                if pause_result == "restart":
+                                    self.tools.reset()
+                                    pop = self.settings.freeplay_initial_population
+                                    dna_list = [DNA.random() for _ in range(pop)]
+                                    world = self._create_world(dna_list)
+                                    world.freeplay = True
+                                    world.generation = 0
+                                    self._freeplay_elapsed = 0.0
+                                    self._freeplay_peak_pop = pop
+                                    self._freeplay_history.clear()
+                                    self._freeplay_history_timer = 0.0
+                                    self._freeplay_last_births = 0
+                                    self._freeplay_last_deaths = 0
+                                    self._freeplay_births_per_min = 0.0
+                                    self._freeplay_deaths_per_min = 0.0
+                                    self._freeplay_stats_timer = 0.0
+                                    self.renderer.reset_tracking()
+                                    continue
+                                return
+                    # Tool hotkeys (1-6)
+                    elif pygame.K_1 <= event.key <= pygame.K_6:
+                        tool_idx = event.key - pygame.K_1
+                        if tool_idx < len(TOOL_LIST):
+                            self.tools.select_tool(TOOL_LIST[tool_idx])
+
+                # Right-click to inspect creature
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                    mx, my = event.pos
+                    if not self.settings_panel.consumes_click(mx, my):
+                        if not self.renderer.try_select_creature(world, mx, my):
+                            self.renderer.deselect_creature()
+
+                # Left-click for tools
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = event.pos
+                    if self.settings_panel.consumes_click(mx, my):
+                        continue
+                    toolbar_x = config.WINDOW_WIDTH - 380
+                    if my < 75 and mx > toolbar_x:
+                        btn_w = 58
+                        gap = 4
+                        for i, tool in enumerate(TOOL_LIST):
+                            tx = toolbar_x + i * (btn_w + gap)
+                            if tx <= mx <= tx + btn_w:
+                                self.tools.select_tool(tool)
+                                break
+                    elif self.tools.active_tool == "none":
+                        if not self.renderer.try_select_creature(world, mx, my):
+                            self.renderer.deselect_creature()
+                    else:
+                        food_positions = self.tools.on_mouse_down(mx, my)
+                        for fx, fy in food_positions:
+                            world.add_food_at(fx, fy)
+
+                if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    mx, my = event.pos
+                    self.tools.on_mouse_up(mx, my)
+
+            # Update settings panel dragging
+            self.settings = self.settings_panel.update_dragging(self.settings)
+
+            # Update simulation
+            if not self.paused:
+                if self.fast_forward:
+                    for _ in range(self.fast_forward_multiplier):
+                        world.update(dt)
+                        world.check_breeding()
+                else:
+                    world.update(dt)
+                    world.check_breeding()
+
+                self._freeplay_elapsed += dt
+
+                # Periodic cleanup and stats
+                self._freeplay_stats_timer += dt
+                self._freeplay_history_timer += dt
+                if self._freeplay_stats_timer >= 5.0:
+                    world.remove_dead_creatures(min_dead_age=3.0)
+                    # Update rolling birth/death rates
+                    births_delta = world.total_births - self._freeplay_last_births
+                    deaths_delta = world.total_deaths - self._freeplay_last_deaths
+                    interval = self._freeplay_stats_timer
+                    self._freeplay_births_per_min = births_delta / interval * 60
+                    self._freeplay_deaths_per_min = deaths_delta / interval * 60
+                    world._freeplay_births_per_min = self._freeplay_births_per_min
+                    world._freeplay_deaths_per_min = self._freeplay_deaths_per_min
+                    self._freeplay_last_births = world.total_births
+                    self._freeplay_last_deaths = world.total_deaths
+                    self._freeplay_stats_timer = 0.0
+
+                # Record population history snapshot every 10 seconds
+                if self._freeplay_history_timer >= 10.0:
+                    alive_creatures = [c for c in world.creatures if c.alive]
+                    n_alive = len(alive_creatures)
+                    self._freeplay_history.append({
+                        "time": self._freeplay_elapsed,
+                        "population": n_alive,
+                        "births": world.total_births,
+                        "deaths": world.total_deaths,
+                        "births_per_min": self._freeplay_births_per_min,
+                        "deaths_per_min": self._freeplay_deaths_per_min,
+                        "herbivores": sum(1 for c in alive_creatures if c.dna.diet == 0),
+                        "carnivores": sum(1 for c in alive_creatures if c.dna.diet == 1),
+                        "scavengers": sum(1 for c in alive_creatures if c.dna.diet == 2),
+                        "avg_gen": (
+                            sum(c.generation for c in alive_creatures) / n_alive
+                            if n_alive else 0
+                        ),
+                    })
+                    # Keep last 360 snapshots (~1 hour at 10s intervals)
+                    if len(self._freeplay_history) > 360:
+                        self._freeplay_history = self._freeplay_history[-360:]
+                    self._freeplay_history_timer = 0.0
+
+                alive = world.alive_count()
+                if alive > self._freeplay_peak_pop:
+                    self._freeplay_peak_pop = alive
+
+            # Check for extinction
+            if world.alive_count() == 0 and not self.paused:
+                # Auto-respawn with random creatures
+                pop = self.settings.freeplay_initial_population
+                dna_list = [DNA.random() for _ in range(pop)]
+                world = self._create_world(dna_list)
+                world.freeplay = True
+                world.generation = 0
+                self.renderer.reset_tracking()
+
+            # Render
+            self.renderer.draw(
+                world, "freeplay", self.paused,
+                tools=self.tools,
+                show_toolbar=True,
+                fast_forward=self.fast_forward_multiplier if self.fast_forward else 0,
+            )
+            if self.debug_mode:
+                self.renderer.draw_debug(world)
+            self.renderer.draw_creature_stats(world, "freeplay")
+            if self.show_evolution_panel:
+                self.renderer.draw_evolution_panel(
+                    world, "freeplay", self._freeplay_history,
+                )
+            if self.tools.active_tool != "none":
+                self.renderer.draw_tool_cursor(self.tools)
+            self.settings_panel.draw(self.screen, self.settings, dt)
+            pygame.display.flip()
 
     # ── Generation Loop ──────────────────────────────────────
 

@@ -37,6 +37,11 @@ from pangea.config import (
     ENERGY_COST_PER_THRUST,
     HERBIVORE_FOOD_BONUS,
 )
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pangea.settings import SimSettings
 from pangea.dna import DNA
 
 
@@ -59,9 +64,26 @@ class Creature:
         self.under_attack = 0.0  # 0.0 = safe, 1.0 = taking damage this frame
         self.territory_cells: set[tuple[int, int]] = set()  # visited grid cells
 
+        # Freeplay breeding state
+        self.breed_cooldown: float = 0.0   # seconds until next breed allowed
+        self.offspring_count: int = 0       # total children produced
+        self.generation: int = 0            # 0 = founding population
+
         # Build brain from DNA weights
         self.brain = NeuralNetwork()
         self.brain.set_weights(dna.weights)
+
+    # ── Breeding ─────────────────────────────────────────────
+
+    def can_breed(self, settings: SimSettings) -> bool:
+        """Check if this creature meets all freeplay breeding criteria."""
+        return (
+            self.alive
+            and self.age >= settings.freeplay_breed_min_age
+            and self.food_eaten >= settings.freeplay_breed_min_food
+            and self.energy >= settings.freeplay_breed_energy_threshold * BASE_ENERGY
+            and self.breed_cooldown <= 0
+        )
 
     # ── Sensors ──────────────────────────────────────────────
 
@@ -253,6 +275,10 @@ class Creature:
 
         # Track age
         self.age += dt
+
+        # Tick breeding cooldown
+        if self.breed_cooldown > 0:
+            self.breed_cooldown -= dt
 
         # Check death — energy depletion
         if self.energy <= 0:

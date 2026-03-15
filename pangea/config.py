@@ -161,6 +161,19 @@ CORPSE_ENERGY = 25.0            # Energy in a corpse food item
 CORPSE_DECAY_TIME = 10.0        # Seconds before a corpse disappears
 CORPSE_RADIUS = 5.0             # Radius of corpse food items
 
+# ── Freeplay Mode ──────────────────────────────────────────
+FREEPLAY_INITIAL_POPULATION = 40     # Starting population size
+FREEPLAY_CARRYING_CAPACITY = 80      # Soft population cap (food slows above this)
+FREEPLAY_HARD_CAP = 120              # Absolute max population (births blocked)
+FREEPLAY_BREED_MIN_AGE = 5.0         # Min seconds alive before breeding
+FREEPLAY_BREED_MIN_FOOD = 3          # Min food eaten to qualify for breeding
+FREEPLAY_BREED_ENERGY_THRESHOLD = 0.6  # Energy must be above this fraction of BASE_ENERGY
+FREEPLAY_BREED_COOLDOWN = 10.0       # Seconds between successive breedings
+FREEPLAY_BREED_ENERGY_COST = 30.0    # Energy deducted from parent when breeding
+FREEPLAY_CHILD_ENERGY = 60.0         # Starting energy for newborns
+FREEPLAY_CHILD_SPAWN_RADIUS = 30.0   # Max pixel distance child spawns from parent
+FREEPLAY_OVERCAPACITY_FOOD_PENALTY = 0.5  # Food spawn rate multiplier when above soft cap
+
 COLOR_HERBIVORE = (80, 200, 80)     # Green tint for herbivores
 COLOR_CARNIVORE = (200, 60, 60)     # Red tint for carnivores
 COLOR_SCAVENGER = (180, 140, 50)    # Yellow/brown tint for scavengers

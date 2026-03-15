@@ -626,19 +626,46 @@ class Renderer:
     def _draw_hud(self, world: World, mode: str, tools: PlayerTools | None = None) -> None:
         """Draw the heads-up display with generation info."""
         # Semi-transparent HUD background
-        hud_h = 150 if mode == "isolation" else 200
-        hud_surf = pygame.Surface((260, hud_h), pygame.SRCALPHA)
+        hud_h = 150 if mode == "isolation" else (230 if mode == "freeplay" else 200)
+        hud_surf = pygame.Surface((280, hud_h), pygame.SRCALPHA)
         hud_surf.fill((10, 10, 20, 160))
         self.surface.blit(hud_surf, (5, 5))
 
         y = 12
-        lines = [
-            (f"Gen: {world.generation}", (140, 180, 255)),
-            (f"Alive: {world.alive_count()} / {len(world.creatures)}", (180, 220, 180)),
-            (f"Time: {world.elapsed_time:.1f}s", (180, 180, 200)),
-            (f"Food: {len(world.food)}", (140, 230, 140)),
-            (self._time_of_day_label(world.daylight_factor), (255, 220, 140)),
-        ]
+
+        if mode == "freeplay":
+            alive = world.alive_count()
+            cap = world.settings.freeplay_carrying_capacity
+            # Get stats from simulation (stored on world for convenience)
+            elapsed = world.elapsed_time
+            mins = int(elapsed) // 60
+            secs = int(elapsed) % 60
+            # Compute avg generation of living creatures
+            alive_creatures = [c for c in world.creatures if c.alive]
+            avg_gen = (
+                sum(c.generation for c in alive_creatures) / len(alive_creatures)
+                if alive_creatures else 0
+            )
+            # Get birth/death rates if available
+            births_rate = getattr(world, '_freeplay_births_per_min', 0.0)
+            deaths_rate = getattr(world, '_freeplay_deaths_per_min', 0.0)
+            lines = [
+                (f"Freeplay  {mins}m {secs:02d}s", (220, 180, 100)),
+                (f"Pop: {alive} / {cap} (cap)", (180, 220, 180)),
+                (f"Births: {world.total_births}  Deaths: {world.total_deaths}", (180, 180, 200)),
+                (f"B/min: {births_rate:.1f}  D/min: {deaths_rate:.1f}", (160, 170, 190)),
+                (f"Avg Gen: {avg_gen:.1f}", (140, 180, 255)),
+                (f"Food: {len(world.food)}", (140, 230, 140)),
+                (self._time_of_day_label(world.daylight_factor), (255, 220, 140)),
+            ]
+        else:
+            lines = [
+                (f"Gen: {world.generation}", (140, 180, 255)),
+                (f"Alive: {world.alive_count()} / {len(world.creatures)}", (180, 220, 180)),
+                (f"Time: {world.elapsed_time:.1f}s", (180, 180, 200)),
+                (f"Food: {len(world.food)}", (140, 230, 140)),
+                (self._time_of_day_label(world.daylight_factor), (255, 220, 140)),
+            ]
 
         if tools and tools.drought_active:
             lines.append(("DROUGHT ACTIVE", (255, 200, 50)))
@@ -968,8 +995,180 @@ class Renderer:
             self.surface.blit(val_text, (bx + bar_w_max + 4, bar_y))
             bar_y += 20
 
-        # ── Generation History Graph ──
-        if len(generation_history) >= 2:
+        # ── History Graphs ──
+        if mode == "freeplay" and len(generation_history) >= 2:
+            # Population over time graph
+            graph_y = bar_y + 16
+            graph_label = self.font.render("Population History", True, (180, 200, 230))
+            self.surface.blit(graph_label, (panel_x + 12, graph_y))
+            graph_y += 24
+
+            graph_x = panel_x + 12
+            graph_w = panel_w - 24
+            graph_h = 100
+
+            # Graph background
+            pygame.draw.rect(
+                self.surface, (20, 22, 35),
+                (graph_x, graph_y, graph_w, graph_h), border_radius=4,
+            )
+            pygame.draw.rect(
+                self.surface, (40, 45, 60),
+                (graph_x, graph_y, graph_w, graph_h), 1, border_radius=4,
+            )
+
+            # Gridlines
+            for i in range(1, 4):
+                gy = graph_y + int(graph_h * i / 4)
+                pygame.draw.line(
+                    self.surface, (30, 35, 50),
+                    (graph_x, gy), (graph_x + graph_w, gy),
+                )
+
+            history = generation_history
+            n = len(history)
+            x_step = graph_w / max(n - 1, 1)
+
+            # Population line
+            pop_vals = [h["population"] for h in history]
+            y_max_pop = max(pop_vals) * 1.1 if pop_vals else 1
+            y_max_pop = max(y_max_pop, 1)
+
+            pop_points = []
+            for i, h in enumerate(history):
+                px = graph_x + int(i * x_step)
+                py = graph_y + graph_h - int(h["population"] / y_max_pop * graph_h)
+                py = max(graph_y, min(graph_y + graph_h, py))
+                pop_points.append((px, py))
+            if len(pop_points) >= 2:
+                pygame.draw.lines(self.surface, (100, 220, 255), False, pop_points, 2)
+
+            # Diet breakdown lines
+            diet_lines = [
+                ("herbivores", COLOR_HERBIVORE),
+                ("carnivores", COLOR_CARNIVORE),
+                ("scavengers", COLOR_SCAVENGER),
+            ]
+            for key, color in diet_lines:
+                pts = []
+                for i, h in enumerate(history):
+                    px = graph_x + int(i * x_step)
+                    py = graph_y + graph_h - int(h[key] / y_max_pop * graph_h)
+                    py = max(graph_y, min(graph_y + graph_h, py))
+                    pts.append((px, py))
+                if len(pts) >= 2:
+                    pygame.draw.lines(self.surface, color, False, pts, 1)
+
+            # Y-axis max label
+            max_lbl = self.font_small.render(f"{int(y_max_pop)}", True, (90, 95, 110))
+            self.surface.blit(max_lbl, (graph_x, graph_y - 2))
+
+            # Time axis labels
+            t_start = history[0]["time"]
+            t_end = history[-1]["time"]
+            t_start_lbl = self.font_small.render(
+                f"{int(t_start) // 60}m{int(t_start) % 60:02d}s", True, (90, 95, 110),
+            )
+            t_end_lbl = self.font_small.render(
+                f"{int(t_end) // 60}m{int(t_end) % 60:02d}s", True, (90, 95, 110),
+            )
+            self.surface.blit(t_start_lbl, (graph_x, graph_y + graph_h + 4))
+            self.surface.blit(
+                t_end_lbl,
+                (graph_x + graph_w - t_end_lbl.get_width(), graph_y + graph_h + 4),
+            )
+
+            # Legend
+            legend_y = graph_y + graph_h + 22
+            legend_x = panel_x + 12
+            legend_items = [
+                ("Pop", (100, 220, 255)),
+                ("Herb", COLOR_HERBIVORE),
+                ("Carn", COLOR_CARNIVORE),
+                ("Scav", COLOR_SCAVENGER),
+            ]
+            for name, color in legend_items:
+                pygame.draw.rect(self.surface, color, (legend_x, legend_y + 2, 10, 10))
+                lbl = self.font_small.render(name, True, (140, 150, 170))
+                self.surface.blit(lbl, (legend_x + 14, legend_y))
+                legend_x += 58
+
+            # ── Birth/Death Rate Graph ──
+            rate_graph_y = legend_y + 24
+            rate_label = self.font.render("Birth / Death Rate", True, (180, 200, 230))
+            self.surface.blit(rate_label, (panel_x + 12, rate_graph_y))
+            rate_graph_y += 24
+
+            rate_graph_h = 80
+
+            # Graph background
+            pygame.draw.rect(
+                self.surface, (20, 22, 35),
+                (graph_x, rate_graph_y, graph_w, rate_graph_h), border_radius=4,
+            )
+            pygame.draw.rect(
+                self.surface, (40, 45, 60),
+                (graph_x, rate_graph_y, graph_w, rate_graph_h), 1, border_radius=4,
+            )
+
+            # Gridlines
+            for i in range(1, 4):
+                gy = rate_graph_y + int(rate_graph_h * i / 4)
+                pygame.draw.line(
+                    self.surface, (30, 35, 50),
+                    (graph_x, gy), (graph_x + graph_w, gy),
+                )
+
+            birth_vals = [h["births_per_min"] for h in history]
+            death_vals = [h["deaths_per_min"] for h in history]
+            y_max_rate = max(max(birth_vals), max(death_vals), 1) * 1.1
+
+            # Birth rate line (green)
+            birth_points = []
+            for i, h in enumerate(history):
+                px = graph_x + int(i * x_step)
+                py = rate_graph_y + rate_graph_h - int(
+                    h["births_per_min"] / y_max_rate * rate_graph_h
+                )
+                py = max(rate_graph_y, min(rate_graph_y + rate_graph_h, py))
+                birth_points.append((px, py))
+            if len(birth_points) >= 2:
+                pygame.draw.lines(self.surface, (80, 255, 120), False, birth_points, 2)
+
+            # Death rate line (red)
+            death_points = []
+            for i, h in enumerate(history):
+                px = graph_x + int(i * x_step)
+                py = rate_graph_y + rate_graph_h - int(
+                    h["deaths_per_min"] / y_max_rate * rate_graph_h
+                )
+                py = max(rate_graph_y, min(rate_graph_y + rate_graph_h, py))
+                death_points.append((px, py))
+            if len(death_points) >= 2:
+                pygame.draw.lines(self.surface, (255, 90, 90), False, death_points, 2)
+
+            # Y-axis max label
+            rate_max_lbl = self.font_small.render(
+                f"{y_max_rate:.0f}/m", True, (90, 95, 110),
+            )
+            self.surface.blit(rate_max_lbl, (graph_x, rate_graph_y - 2))
+
+            # Rate legend
+            rate_legend_y = rate_graph_y + rate_graph_h + 6
+            pygame.draw.rect(
+                self.surface, (80, 255, 120),
+                (panel_x + 12, rate_legend_y + 2, 10, 10),
+            )
+            lbl = self.font_small.render("Births/min", True, (140, 150, 170))
+            self.surface.blit(lbl, (panel_x + 26, rate_legend_y))
+            pygame.draw.rect(
+                self.surface, (255, 90, 90),
+                (panel_x + 110, rate_legend_y + 2, 10, 10),
+            )
+            lbl = self.font_small.render("Deaths/min", True, (140, 150, 170))
+            self.surface.blit(lbl, (panel_x + 124, rate_legend_y))
+
+        elif len(generation_history) >= 2:
             graph_y = bar_y + 16
             graph_label = self.font.render("Trait Evolution", True, (180, 200, 230))
             self.surface.blit(graph_label, (panel_x + 12, graph_y))
@@ -1057,7 +1256,12 @@ class Renderer:
                 legend_x += 58
 
         # ── Stats Summary ──
-        summary_y = bar_y + 180 if len(generation_history) >= 2 else bar_y + 16
+        if mode == "freeplay" and len(generation_history) >= 2:
+            summary_y = bar_y + 310
+        elif len(generation_history) >= 2:
+            summary_y = bar_y + 180
+        else:
+            summary_y = bar_y + 16
         if alive:
             avg_energy = sum(c.energy for c in alive) / len(alive)
             avg_food = sum(c.food_eaten for c in alive) / len(alive)

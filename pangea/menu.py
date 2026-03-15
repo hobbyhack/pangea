@@ -102,9 +102,11 @@ class Menu:
                                 color=(40, 70, 50), hover_color=(55, 100, 65)),
             "convergence": Button(cx - btn_w // 2, 400, btn_w, btn_h, "Convergence Mode",
                                   color=(50, 45, 75), hover_color=(70, 60, 110)),
-            "settings": Button(cx - btn_w // 2, 470, btn_w, btn_h, "Settings",
+            "freeplay": Button(cx - btn_w // 2, 470, btn_w, btn_h, "Freeplay Mode",
+                               color=(60, 55, 40), hover_color=(90, 80, 55)),
+            "settings": Button(cx - btn_w // 2, 540, btn_w, btn_h, "Settings",
                                color=(55, 55, 65), hover_color=(75, 75, 90)),
-            "quit": Button(cx - btn_w // 2, 540, btn_w, btn_h, "Quit",
+            "quit": Button(cx - btn_w // 2, 610, btn_w, btn_h, "Quit",
                            color=(65, 40, 40), hover_color=(90, 50, 50)),
         }
 
@@ -485,7 +487,7 @@ class Menu:
             ((55, 55, 55), (75, 75, 75)),
             ((65, 40, 40), (90, 50, 50)),
         ]
-        if mode == "isolation":
+        if mode in ("isolation", "freeplay"):
             options.insert(1, "save_quit")
             labels.insert(1, "Save & Quit")
             colors.insert(1, ((50, 50, 70), (65, 65, 95)))

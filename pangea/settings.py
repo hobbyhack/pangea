@@ -87,6 +87,19 @@ class SimSettings:
     predator_stamina: float = 0.0
     predator_respawn_interval: float = 0.0
 
+    # ── Freeplay Mode ──────────────────────────────────────────
+    freeplay_initial_population: int = config.FREEPLAY_INITIAL_POPULATION
+    freeplay_carrying_capacity: int = config.FREEPLAY_CARRYING_CAPACITY
+    freeplay_hard_cap: int = config.FREEPLAY_HARD_CAP
+    freeplay_breed_min_age: float = config.FREEPLAY_BREED_MIN_AGE
+    freeplay_breed_min_food: int = config.FREEPLAY_BREED_MIN_FOOD
+    freeplay_breed_energy_threshold: float = config.FREEPLAY_BREED_ENERGY_THRESHOLD
+    freeplay_breed_cooldown: float = config.FREEPLAY_BREED_COOLDOWN
+    freeplay_breed_energy_cost: float = config.FREEPLAY_BREED_ENERGY_COST
+    freeplay_child_energy: float = config.FREEPLAY_CHILD_ENERGY
+    freeplay_child_spawn_radius: float = config.FREEPLAY_CHILD_SPAWN_RADIUS
+    freeplay_overcapacity_food_penalty: float = config.FREEPLAY_OVERCAPACITY_FOOD_PENALTY
+
     def to_dict(self) -> dict:
         """Serialize all settings to a plain dict."""
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -120,48 +133,7 @@ class SimSettings:
 
     def copy(self) -> SimSettings:
         """Create an independent copy of these settings."""
-        return SimSettings(
-            population_size=self.population_size,
-            generation_time_limit=self.generation_time_limit,
-            top_performers_count=self.top_performers_count,
-            min_population=self.min_population,
-            extinction_threshold=self.extinction_threshold,
-            max_generations=self.max_generations,
-            mutation_rate=self.mutation_rate,
-            mutation_strength=self.mutation_strength,
-            crossover_rate=self.crossover_rate,
-            trait_mutation_range=self.trait_mutation_range,
-            weight_clamp=self.weight_clamp,
-            food_spawn_rate=self.food_spawn_rate,
-            food_energy=self.food_energy,
-            initial_food_count=self.initial_food_count,
-            world_wrap=self.world_wrap,
-            food_decay_time=self.food_decay_time,
-            corpse_decay_time=self.corpse_decay_time,
-            food_cluster_size=self.food_cluster_size,
-            season_length=self.season_length,
-            season_min_rate=self.season_min_rate,
-            biome_count=self.biome_count,
-            base_energy=self.base_energy,
-            energy_cost_per_thrust=self.energy_cost_per_thrust,
-            turn_cost=self.turn_cost,
-            food_heal=self.food_heal,
-            fitness_food_weight=self.fitness_food_weight,
-            fitness_time_weight=self.fitness_time_weight,
-            fitness_energy_weight=self.fitness_energy_weight,
-            territory_fitness_weight=self.territory_fitness_weight,
-            convergence_max_generations=self.convergence_max_generations,
-            day_night_cycle_length=self.day_night_cycle_length,
-            night_vision_multiplier=self.night_vision_multiplier,
-            hazard_count=self.hazard_count,
-            predator_count=self.predator_count,
-            predator_speed=self.predator_speed,
-            predator_vision=self.predator_vision,
-            predator_damage=self.predator_damage,
-            predator_radius=self.predator_radius,
-            predator_stamina=self.predator_stamina,
-            predator_respawn_interval=self.predator_respawn_interval,
-        )
+        return SimSettings.from_dict(self.to_dict())
 
 
 # ── Setting Definitions for the UI ──────────────────────────
@@ -266,4 +238,23 @@ SETTING_DEFS: list[SettingDef] = [
                tooltip="How much remaining energy at death contributes to fitness"),
     SettingDef("territory_fitness_weight", "Territory Weight", 0.0, 5.0, 0.1, ".1f", "Fitness",
                tooltip="How much area explored contributes to fitness (rewards exploration)"),
+    # Freeplay
+    SettingDef("freeplay_initial_population", "Initial Population", 10, 100, 5, ".0f", "Freeplay",
+               tooltip="Number of random creatures at the start of freeplay"),
+    SettingDef("freeplay_carrying_capacity", "Carrying Capacity", 20, 200, 10, ".0f", "Freeplay",
+               tooltip="Soft population cap — food spawns slower above this"),
+    SettingDef("freeplay_hard_cap", "Hard Cap", 30, 300, 10, ".0f", "Freeplay",
+               tooltip="Absolute max population — no births above this"),
+    SettingDef("freeplay_breed_min_age", "Breed Min Age (s)", 1, 30, 1, ".0f", "Freeplay",
+               tooltip="Minimum seconds alive before a creature can breed"),
+    SettingDef("freeplay_breed_min_food", "Breed Min Food", 1, 20, 1, ".0f", "Freeplay",
+               tooltip="Minimum food items eaten before breeding is allowed"),
+    SettingDef("freeplay_breed_energy_threshold", "Breed Energy %", 0.1, 1.0, 0.05, ".2f", "Freeplay",
+               tooltip="Energy must be above this fraction of base energy to breed"),
+    SettingDef("freeplay_breed_cooldown", "Breed Cooldown (s)", 1, 60, 1, ".0f", "Freeplay",
+               tooltip="Seconds between successive breeding attempts"),
+    SettingDef("freeplay_breed_energy_cost", "Breed Energy Cost", 5, 100, 5, ".0f", "Freeplay",
+               tooltip="Energy deducted from parent when offspring is produced"),
+    SettingDef("freeplay_child_energy", "Child Start Energy", 10, 200, 10, ".0f", "Freeplay",
+               tooltip="Starting energy for newborn creatures"),
 ]

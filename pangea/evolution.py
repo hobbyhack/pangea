@@ -347,6 +347,48 @@ def create_next_generation(
     return new_generation
 
 
+def breed_creature(
+    parent: Creature,
+    mutation_rate: float = MUTATION_RATE,
+    mutation_strength: float = MUTATION_STRENGTH,
+    weight_clamp: float = 0.0,
+    trait_mutation_range: int = TRAIT_MUTATION_RANGE,
+) -> DNA:
+    """
+    Produce one offspring DNA from a single parent creature.
+
+    Clones the parent's DNA, applies weight and trait mutation,
+    and possibly mutates diet. Used in freeplay mode for individual
+    continuous breeding.
+    """
+    child_weights = [w.copy() for w in parent.dna.weights]
+    child_weights = mutate_weights(
+        child_weights, mutation_rate, mutation_strength, weight_clamp,
+    )
+
+    diet = parent.dna.diet
+    if random.random() < DIET_MUTATION_RATE:
+        diet = random.choice([DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER])
+
+    child_dna = DNA(
+        weights=child_weights,
+        speed=parent.dna.speed,
+        size=parent.dna.size,
+        vision=parent.dna.vision,
+        efficiency=parent.dna.efficiency,
+        lifespan=parent.dna.lifespan,
+        diet=diet,
+    )
+    s, sz, v, e, lf = mutate_traits(child_dna, trait_mutation_range)
+    child_dna.speed = s
+    child_dna.size = sz
+    child_dna.vision = v
+    child_dna.efficiency = e
+    child_dna.lifespan = lf
+
+    return child_dna
+
+
 def create_next_generation_convergence(
     creatures: list[Creature],
     top_n: int = TOP_PERFORMERS_COUNT // 2,
