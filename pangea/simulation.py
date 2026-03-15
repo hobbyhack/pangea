@@ -39,7 +39,9 @@ from pangea.evolution import (
 )
 from pangea.menu import Menu
 from pangea.renderer import Renderer
-from pangea.save_load import load_game, load_species, save_game, save_species
+from pangea.save_load import (
+    load_game, load_snapshot, load_species, save_game, save_snapshot, save_species,
+)
 from pangea.settings import SimSettings
 from pangea.settings_panel import SettingsPanel
 from pangea.tools import TOOL_LIST, PlayerTools
@@ -170,9 +172,12 @@ class Simulation:
                             loaded_extra=extra,
                         )
                     elif choice == "freeplay":
-                        self._run_freeplay(
-                            loaded_dna=save_data["creatures"],
-                        )
+                        if save_data.get("snapshot"):
+                            self._run_freeplay(loaded_snapshot=save_data)
+                        else:
+                            self._run_freeplay(
+                                loaded_dna=save_data["creatures"],
+                            )
                 self._active_world = None
 
         pygame.quit()
@@ -472,31 +477,79 @@ class Simulation:
 
     # ── Freeplay Mode ─────────────────────────────────────────
 
-    def _run_freeplay(self, loaded_dna: list[DNA] | None = None) -> None:
+    def _run_freeplay(
+        self,
+        loaded_dna: list[DNA] | None = None,
+        loaded_snapshot: dict | None = None,
+    ) -> None:
         """Run continuous breeding mode — no generations, creatures breed in real time."""
         self.tools = PlayerTools()
 
-        if loaded_dna:
+        if loaded_snapshot:
+            # Resume from full snapshot — restore exact simulation state
+            creatures = loaded_snapshot["creatures"]
+            world = World(creatures, settings=self.settings, tools=self.tools)
+            world.freeplay = True
+            world.generation = 0
+            # Overwrite auto-generated entities with saved state
+            world.food = loaded_snapshot["food"]
+            world.predators = loaded_snapshot["predators"]
+            world.hazards = loaded_snapshot["hazards"]
+            world.biomes = loaded_snapshot["biomes"]
+            self._active_world = world
+            timers = loaded_snapshot.get("world_timers", {})
+            world.elapsed_time = timers.get("elapsed_time", 0.0)
+            world.season_time = timers.get("season_time", 0.0)
+            world.day_night_time = timers.get("day_night_time", 0.0)
+            world.total_births = timers.get("total_births", 0)
+            world.total_deaths = timers.get("total_deaths", 0)
+            world._food_spawn_accum = timers.get("food_spawn_accum", 0.0)
+            world._predator_respawn_timer = timers.get("predator_respawn_timer", 0.0)
+            # Restore tools state
+            self.tools.drought_active = loaded_snapshot.get("tools_drought", False)
+            self.tools.zones = loaded_snapshot.get("tools_zones", [])
+            self.tools.barriers = loaded_snapshot.get("tools_barriers", [])
+            # Restore freeplay tracking
+            fp = loaded_snapshot.get("freeplay_state", {})
+            self._freeplay_elapsed = fp.get("elapsed", 0.0)
+            self._freeplay_peak_pop = fp.get("peak_pop", len(creatures))
+            self._freeplay_last_births = fp.get("last_births", 0)
+            self._freeplay_last_deaths = fp.get("last_deaths", 0)
+            self._freeplay_births_per_min = fp.get("births_per_min", 0.0)
+            self._freeplay_deaths_per_min = fp.get("deaths_per_min", 0.0)
+            self._freeplay_history = fp.get("history", [])
+            self._freeplay_history_timer = 0.0
+            self._freeplay_stats_timer = 0.0
+        elif loaded_dna:
             # Resume from save — use loaded DNA directly as starting population
             dna_list = loaded_dna
+            world = self._create_world(dna_list)
+            world.freeplay = True
+            world.generation = 0
+            self._freeplay_elapsed = 0.0
+            self._freeplay_last_births = 0
+            self._freeplay_last_deaths = 0
+            self._freeplay_births_per_min = 0.0
+            self._freeplay_deaths_per_min = 0.0
+            self._freeplay_stats_timer = 0.0
+            self._freeplay_peak_pop = len(dna_list)
+            self._freeplay_history: list[dict] = []
+            self._freeplay_history_timer = 0.0
         else:
             pop = self.settings.freeplay_initial_population
             dna_list = [DNA.random() for _ in range(pop)]
-
-        world = self._create_world(dna_list)
-        world.freeplay = True
-        world.generation = 0
-
-        # Track rolling stats for the HUD
-        self._freeplay_elapsed = 0.0
-        self._freeplay_last_births = 0
-        self._freeplay_last_deaths = 0
-        self._freeplay_births_per_min = 0.0
-        self._freeplay_deaths_per_min = 0.0
-        self._freeplay_stats_timer = 0.0
-        self._freeplay_peak_pop = len(dna_list)
-        self._freeplay_history: list[dict] = []
-        self._freeplay_history_timer = 0.0
+            world = self._create_world(dna_list)
+            world.freeplay = True
+            world.generation = 0
+            self._freeplay_elapsed = 0.0
+            self._freeplay_last_births = 0
+            self._freeplay_last_deaths = 0
+            self._freeplay_births_per_min = 0.0
+            self._freeplay_deaths_per_min = 0.0
+            self._freeplay_stats_timer = 0.0
+            self._freeplay_peak_pop = len(dna_list)
+            self._freeplay_history: list[dict] = []
+            self._freeplay_history_timer = 0.0
 
         while self.running:
             dt = self.clock.tick(FPS) / 1000.0
@@ -549,20 +602,28 @@ class Simulation:
                             if pause_result == "resume":
                                 self.paused = False
                             elif pause_result == "save_quit":
-                                # Save all living creatures' DNA
+                                # Save full simulation snapshot
+                                freeplay_state = {
+                                    "elapsed": self._freeplay_elapsed,
+                                    "peak_pop": self._freeplay_peak_pop,
+                                    "last_births": self._freeplay_last_births,
+                                    "last_deaths": self._freeplay_last_deaths,
+                                    "births_per_min": self._freeplay_births_per_min,
+                                    "deaths_per_min": self._freeplay_deaths_per_min,
+                                    "history": self._freeplay_history,
+                                }
+                                save_snapshot(
+                                    world=world,
+                                    settings_dict=self.settings.to_dict(),
+                                    freeplay_state=freeplay_state,
+                                    tools=self.tools,
+                                )
+                                # Also save species file for convergence use
                                 alive = [c for c in world.creatures if c.alive]
                                 if alive:
                                     top_dna = [c.dna for c in sorted(
                                         alive, key=lambda c: c.food_eaten, reverse=True,
                                     )[:self.settings.top_performers_count]]
-                                    # Save full game state for resuming
-                                    save_game(
-                                        mode="freeplay",
-                                        dna_list=top_dna,
-                                        generation=0,
-                                        settings_dict=self.settings.to_dict(),
-                                    )
-                                    # Also save species file for convergence use
                                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                                     filepath = f"species/freeplay_{timestamp}.json"
                                     save_species(top_dna, filepath, generation=0)

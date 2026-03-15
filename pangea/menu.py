@@ -250,8 +250,12 @@ class Menu:
                             idx = i + scroll_offset
                             item_rect = pygame.Rect(cx - btn_w // 2, list_top + i * 50, btn_w, 42)
                             if item_rect.collidepoint(mouse_pos):
-                                from pangea.save_load import load_game
-                                return load_game(saves[idx]["filepath"])
+                                if saves[idx].get("snapshot"):
+                                    from pangea.save_load import load_snapshot
+                                    return load_snapshot(saves[idx]["filepath"])
+                                else:
+                                    from pangea.save_load import load_game
+                                    return load_game(saves[idx]["filepath"])
 
                     # Right-click to delete a save
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3 and saves:
