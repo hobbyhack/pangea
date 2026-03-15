@@ -492,9 +492,26 @@ class Simulation:
 
             # Check for extinction
             if world.alive_count() == 0 and not self.paused:
-                # Auto-respawn with random creatures
                 pop = self.settings.freeplay_initial_population
-                dna_list = [DNA.random() for _ in range(pop)]
+                # Carry over DNA from the best performers of the extinct population
+                top_dna = select_top(
+                    world.creatures,
+                    min(self.settings.top_performers_count, len(world.creatures)),
+                    self.settings,
+                )
+                if top_dna:
+                    dna_list = create_next_generation(
+                        top_dna,
+                        population_size=pop,
+                        mutation_rate=self.settings.mutation_rate,
+                        mutation_strength=self.settings.mutation_strength,
+                        crossover_rate=self.settings.crossover_rate,
+                        min_parents=self.settings.min_population,
+                        weight_clamp=self.settings.weight_clamp,
+                        trait_mutation_range=self.settings.trait_mutation_range,
+                    )
+                else:
+                    dna_list = [DNA.random() for _ in range(pop)]
                 world = self._create_world(dna_list)
                 world.freeplay = True
                 world.generation = 0
