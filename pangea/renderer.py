@@ -265,24 +265,13 @@ class Renderer:
             self._draw_pause_indicator()
 
     def _begin_world_draw(self, world: World) -> None:
-        """Switch drawing target to world-sized surface if needed."""
-        ww, wh = int(world.width), int(world.height)
-        sw, sh = self.screen.get_size()
-        self._need_scale = (ww != sw or wh != sh)
-        self._world_scale = (ww / max(sw, 1), wh / max(sh, 1))
-        if self._need_scale:
-            if not hasattr(self, "_world_surface") or self._world_surface.get_size() != (ww, wh):
-                self._world_surface = pygame.Surface((ww, wh))
-            self.surface = self._world_surface
-        else:
-            self.surface = self.screen
+        """Prepare for world drawing (1:1 mapping, no scaling)."""
+        self._world_scale = (1.0, 1.0)
+        self._need_scale = False
+        self.surface = self.screen
 
     def _end_world_draw(self) -> None:
-        """Scale world surface onto screen and switch to screen-space drawing."""
-        if self._need_scale:
-            sw, sh = self.screen.get_size()
-            scaled = pygame.transform.smoothscale(self._world_surface, (sw, sh))
-            self.screen.blit(scaled, (0, 0))
+        """Finish world drawing and switch to screen-space drawing."""
         self.surface = self.screen
 
     # ── Day/Night Overlay ─────────────────────────────────────

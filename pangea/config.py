@@ -11,8 +11,8 @@ WINDOW_HEIGHT = 768          # Simulation window height in pixels
 FPS = 60                     # Frames per second (rendering speed)
 
 # ── Play Area (World) Dimensions ────────────────────────────
-WORLD_WIDTH = 1200           # Play area width in pixels
-WORLD_HEIGHT = 800           # Play area height in pixels
+WORLD_WIDTH = WINDOW_WIDTH   # Play area matches window (resizes dynamically)
+WORLD_HEIGHT = WINDOW_HEIGHT
 
 # ── Population & Generations ─────────────────────────────────
 POPULATION_SIZE = 50         # Number of creatures per generation

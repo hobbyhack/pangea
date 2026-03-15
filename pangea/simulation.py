@@ -68,13 +68,21 @@ class Simulation:
         self.show_evolution_panel = False
         self.generation_history: list[dict] = []
         self.settings = SimSettings()
+        self.settings.world_width = config.WINDOW_WIDTH
+        self.settings.world_height = config.WINDOW_HEIGHT
         self.tools = PlayerTools()
         self.settings_panel = SettingsPanel()
+        self._active_world: World | None = None
 
     def _rebuild_display(self) -> None:
         """Update config, renderer, and menu after a screen size change."""
         config.WINDOW_WIDTH = self.screen.get_width()
         config.WINDOW_HEIGHT = self.screen.get_height()
+        # Keep world size in sync with window (1:1, no stretching)
+        self.settings.world_width = config.WINDOW_WIDTH
+        self.settings.world_height = config.WINDOW_HEIGHT
+        if self._active_world is not None:
+            self._active_world.resize(config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
         self.renderer = Renderer(self.screen)
         self.menu.surface = self.screen
 
@@ -116,9 +124,8 @@ class Simulation:
         self._rebuild_display()
 
     def _screen_to_world(self, sx: int, sy: int) -> tuple[float, float]:
-        """Convert screen coordinates to world coordinates."""
-        scale_x, scale_y = getattr(self.renderer, '_world_scale', (1.0, 1.0))
-        return sx * scale_x, sy * scale_y
+        """Convert screen coordinates to world coordinates (1:1 mapping)."""
+        return float(sx), float(sy)
 
     # ── Main Entry Point ─────────────────────────────────────
 
@@ -131,10 +138,13 @@ class Simulation:
                 self.running = False
             elif choice == "isolation":
                 self._run_isolation()
+                self._active_world = None
             elif choice == "convergence":
                 self._run_convergence()
+                self._active_world = None
             elif choice == "freeplay":
                 self._run_freeplay()
+                self._active_world = None
 
         pygame.quit()
 
@@ -316,6 +326,7 @@ class Simulation:
                 all_creatures.append(Creature(dna, x, y, lineage="B"))
 
             world = World(all_creatures, settings=self.settings)
+            self._active_world = world
             world.generation = generation
             self.renderer.reset_tracking()
 
@@ -748,7 +759,9 @@ class Simulation:
             x = random.uniform(50, self.settings.world_width - 50)
             y = random.uniform(50, self.settings.world_height - 50)
             creatures.append(Creature(dna, x, y, lineage=lineage))
-        return World(creatures, settings=self.settings, tools=self.tools)
+        world = World(creatures, settings=self.settings, tools=self.tools)
+        self._active_world = world
+        return world
 
     def _create_convergence_world(
         self, dna_a: list[DNA], dna_b: list[DNA],
@@ -778,4 +791,6 @@ class Simulation:
             y = random.uniform(50, self.settings.world_height - 50)
             creatures.append(Creature(src.dna, x, y, lineage="B"))
 
-        return World(creatures, settings=self.settings)
+        world = World(creatures, settings=self.settings)
+        self._active_world = world
+        return world

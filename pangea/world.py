@@ -228,6 +228,42 @@ class World:
         for _ in range(initial):
             self.food.append(self._random_food())
 
+    # ── Dynamic Resize ─────────────────────────────────────────
+
+    def resize(self, new_width: float, new_height: float) -> None:
+        """Update world bounds to match new window size, clamping entities."""
+        self.width = new_width
+        self.height = new_height
+        self.settings.world_width = int(new_width)
+        self.settings.world_height = int(new_height)
+
+        # Clamp living creatures
+        for creature in self.creatures:
+            if creature.alive:
+                r = creature.dna.effective_radius
+                creature.x = max(r, min(new_width - r, creature.x))
+                creature.y = max(r, min(new_height - r, creature.y))
+
+        # Clamp food
+        for food in self.food:
+            food.x = max(food.radius, min(new_width - food.radius, food.x))
+            food.y = max(food.radius, min(new_height - food.radius, food.y))
+
+        # Clamp predators
+        for pred in self.predators:
+            pred.x = max(pred.radius, min(new_width - pred.radius, pred.x))
+            pred.y = max(pred.radius, min(new_height - pred.radius, pred.y))
+
+        # Clamp hazards
+        for hazard in self.hazards:
+            hazard.x = max(hazard.radius, min(new_width - hazard.radius, hazard.x))
+            hazard.y = max(hazard.radius, min(new_height - hazard.radius, hazard.y))
+
+        # Clamp biomes
+        for biome in self.biomes:
+            biome.x = max(biome.radius, min(new_width - biome.radius, biome.x))
+            biome.y = max(biome.radius, min(new_height - biome.radius, biome.y))
+
     # ── Day/Night Cycle ───────────────────────────────────────
 
     @property
