@@ -242,8 +242,16 @@ class Simulation:
             return
 
         file_a, file_b = result
-        dna_a, _ = load_species(file_a)
-        dna_b, _ = load_species(file_b)
+        try:
+            dna_a, _ = load_species(file_a)
+            dna_b, _ = load_species(file_b)
+        except Exception as exc:
+            self.menu.show_error(f"Failed to load species: {exc}")
+            return
+
+        if not dna_a or not dna_b:
+            self.menu.show_error("Species file has no creatures.")
+            return
 
         a_total_food = 0
         b_total_food = 0
@@ -263,8 +271,12 @@ class Simulation:
             if result == "main_menu":
                 return
             elif result == "restart":
-                dna_a, _ = load_species(file_a)
-                dna_b, _ = load_species(file_b)
+                try:
+                    dna_a, _ = load_species(file_a)
+                    dna_b, _ = load_species(file_b)
+                except Exception as exc:
+                    self.menu.show_error(f"Failed to reload species: {exc}")
+                    return
                 generation = 1
                 a_total_food = b_total_food = 0
                 a_survived_gens = b_survived_gens = 0
@@ -312,8 +324,24 @@ class Simulation:
                 break
 
             generation += 1
-            new_a = create_next_generation(top_a, CREATURES_PER_LINEAGE)
-            new_b = create_next_generation(top_b, CREATURES_PER_LINEAGE)
+            new_a = create_next_generation(
+                top_a, CREATURES_PER_LINEAGE,
+                mutation_rate=self.settings.mutation_rate,
+                mutation_strength=self.settings.mutation_strength,
+                crossover_rate=self.settings.crossover_rate,
+                min_parents=self.settings.min_population,
+                weight_clamp=self.settings.weight_clamp,
+                trait_mutation_range=self.settings.trait_mutation_range,
+            )
+            new_b = create_next_generation(
+                top_b, CREATURES_PER_LINEAGE,
+                mutation_rate=self.settings.mutation_rate,
+                mutation_strength=self.settings.mutation_strength,
+                crossover_rate=self.settings.crossover_rate,
+                min_parents=self.settings.min_population,
+                weight_clamp=self.settings.weight_clamp,
+                trait_mutation_range=self.settings.trait_mutation_range,
+            )
 
             all_creatures = []
             for dna in new_a:

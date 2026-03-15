@@ -662,6 +662,42 @@ class Menu:
             pygame.display.flip()
             clock.tick(30)
 
+    # ── Error Dialog ────────────────────────────────────────
+
+    def show_error(self, message: str) -> None:
+        """Show an error message overlay and wait for keypress/click to dismiss."""
+        clock = pygame.time.Clock()
+        frame = 0
+
+        while True:
+            frame += 1
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return
+                if self._handle_window_event(event):
+                    continue
+                if event.type == pygame.KEYDOWN:
+                    return
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    return
+
+            self._draw_menu_bg(frame)
+
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
+
+            title = self.font_title.render("Error", True, (255, 90, 90))
+            self.surface.blit(title, title.get_rect(center=(cx, cy - 60)))
+
+            msg = self.font.render(message, True, COLOR_HUD_TEXT)
+            self.surface.blit(msg, msg.get_rect(center=(cx, cy + 10)))
+
+            hint = self.font.render("Press any key to return", True, (140, 140, 160))
+            self.surface.blit(hint, hint.get_rect(center=(cx, cy + 60)))
+
+            pygame.display.flip()
+            clock.tick(30)
+
     # ── Utility ──────────────────────────────────────────────
 
     def _draw_menu_bg(self, frame: int) -> None:
