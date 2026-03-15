@@ -143,7 +143,8 @@ class Renderer:
     """Handles all pygame rendering for the simulation."""
 
     def __init__(self, surface: pygame.Surface) -> None:
-        self.surface = surface
+        self.screen = surface  # the actual display surface
+        self.surface = surface  # drawing target (may be world_surface during draw)
         self.font = pygame.font.SysFont("consolas", 16)
         self.font_small = pygame.font.SysFont("consolas", 13)
         self.font_large = pygame.font.SysFont("consolas", 22, bold=True)
@@ -152,6 +153,8 @@ class Renderer:
 
         self.particles = ParticleSystem()
         self.frame = 0
+        self._world_scale = (1.0, 1.0)
+        self._need_scale = False
 
         # Selected creature for inspection
         self.selected_creature: Creature | None = None
@@ -190,9 +193,13 @@ class Renderer:
         tools: PlayerTools | None = None,
         show_toolbar: bool = False,
         fast_forward: int = 0,
+        debug: bool = False,
     ) -> None:
         """Draw the complete frame."""
         self.frame += 1
+
+        # Set up world-sized drawing surface
+        self._begin_world_draw(world)
 
         # Background with subtle gradient
         self._draw_background()
@@ -236,7 +243,14 @@ class Renderer:
         # Day/night darkness overlay (before HUD so HUD stays readable)
         self._draw_darkness_overlay(world)
 
-        # HUD
+        # Debug overlay (world-space, before scaling)
+        if debug:
+            self.draw_debug(world)
+
+        # Scale world onto screen, switch to screen-space drawing
+        self._end_world_draw()
+
+        # HUD (drawn directly on screen, not world surface)
         self._draw_hud(world, mode, tools)
 
         # Toolbar
@@ -249,6 +263,27 @@ class Renderer:
 
         if paused:
             self._draw_pause_indicator()
+
+    def _begin_world_draw(self, world: World) -> None:
+        """Switch drawing target to world-sized surface if needed."""
+        ww, wh = int(world.width), int(world.height)
+        sw, sh = self.screen.get_size()
+        self._need_scale = (ww != sw or wh != sh)
+        self._world_scale = (ww / max(sw, 1), wh / max(sh, 1))
+        if self._need_scale:
+            if not hasattr(self, "_world_surface") or self._world_surface.get_size() != (ww, wh):
+                self._world_surface = pygame.Surface((ww, wh))
+            self.surface = self._world_surface
+        else:
+            self.surface = self.screen
+
+    def _end_world_draw(self) -> None:
+        """Scale world surface onto screen and switch to screen-space drawing."""
+        if self._need_scale:
+            sw, sh = self.screen.get_size()
+            scaled = pygame.transform.smoothscale(self._world_surface, (sw, sh))
+            self.screen.blit(scaled, (0, 0))
+        self.surface = self.screen
 
     # ── Day/Night Overlay ─────────────────────────────────────
 
@@ -922,9 +957,9 @@ class Renderer:
         pygame.draw.rect(self.surface, (20, 22, 35), (map_x, map_y, map_w, map_h), border_radius=4)
         pygame.draw.rect(self.surface, (40, 45, 60), (map_x, map_y, map_w, map_h), 1, border_radius=4)
 
-        # Scale factors
-        sx = map_w / max(config.WINDOW_WIDTH, 1)
-        sy = map_h / max(config.WINDOW_HEIGHT, 1)
+        # Scale factors (world coords → minimap coords)
+        sx = map_w / max(world.width, 1)
+        sy = map_h / max(world.height, 1)
 
         # Draw food dots on minimap
         for food in world.food:
@@ -1364,7 +1399,9 @@ class Renderer:
             return
 
         dna = creature.dna
-        cx, cy = int(creature.x), int(creature.y)
+        # Convert world coords to screen coords
+        scx, scy = self._world_scale
+        cx, cy = int(creature.x / scx), int(creature.y / scy)
 
         # Selection ring around the creature
         radius = max(2, int(dna.effective_radius))

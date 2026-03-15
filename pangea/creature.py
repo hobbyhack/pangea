@@ -15,6 +15,8 @@ Sensor inputs (all normalized):
     [7] Distance to nearest predator  -> 0.0 (touching) to 1.0 (at vision limit / none)
     [8] Angle to nearest predator     -> -1.0 (hard left) to 1.0 (hard right), 0 if none
     [9] Under attack                  -> 0.0 (safe) to 1.0 (taking damage)
+    [10] Biome speed                   -> 0.0 (very slow terrain) to 1.0 (fast terrain)
+    [11] Biome danger                  -> 0.0 (safe/beneficial) to 1.0 (high energy drain)
 
 Brain outputs:
     [0] Turn angle -> mapped to [-pi, pi]
@@ -36,6 +38,7 @@ from pangea.config import (
     DIET_SCAVENGER,
     ENERGY_COST_PER_THRUST,
     HERBIVORE_FOOD_BONUS,
+    SCAVENGER_FOOD_PENALTY,
 )
 
 from typing import TYPE_CHECKING
@@ -147,9 +150,11 @@ class Creature:
         vision_multiplier: float = 1.0,
         creatures: list | None = None,
         predators: list | None = None,
+        biome_speed: float = 1.0,
+        biome_danger: float = 0.0,
     ) -> np.ndarray:
         """
-        Compute the 10 normalized sensor inputs.
+        Compute the 12 normalized sensor inputs.
 
         Args:
             food_list:         List of food objects with .x, .y attributes.
@@ -159,9 +164,11 @@ class Creature:
             vision_multiplier: Scales effective vision (e.g. for day/night cycle).
             creatures:         List of all creatures for neighbor detection.
             predators:         List of predators with .x, .y attributes.
+            biome_speed:       Speed multiplier at creature's position (0.3–1.5).
+            biome_danger:      Energy drain rate at creature's position (0.0–1.0).
 
         Returns:
-            numpy array of shape (10,) with sensor values.
+            numpy array of shape (12,) with sensor values.
         """
         vision = self.dna.effective_vision * vision_multiplier
 
@@ -205,6 +212,11 @@ class Creature:
             pred_dist_normalized = 1.0
             pred_angle_normalized = 0.0
 
+        # ─ Biome sensors ─
+        # Normalize speed: 0.3–1.5 range → 0.0–1.0
+        biome_speed_normalized = min(max((biome_speed - 0.3) / 1.2, 0.0), 1.0)
+        biome_danger_normalized = min(biome_danger, 1.0)
+
         return np.array([
             food_dist_normalized,
             food_angle_normalized,
@@ -216,6 +228,8 @@ class Creature:
             pred_dist_normalized,
             pred_angle_normalized,
             min(self.under_attack, 1.0),
+            biome_speed_normalized,
+            biome_danger_normalized,
         ])
 
     # ── Actions ──────────────────────────────────────────────
@@ -225,7 +239,7 @@ class Creature:
         Run the brain and apply its outputs to movement.
 
         Args:
-            inputs: Sensor array of shape (10,).
+            inputs: Sensor array of shape (12,).
         """
         outputs = self.brain.forward(inputs)
 
@@ -297,7 +311,8 @@ class Creature:
             food_energy *= HERBIVORE_FOOD_BONUS
         elif self.dna.diet == DIET_CARNIVORE:
             food_energy *= CARNIVORE_FOOD_PENALTY
-        # Scavengers eat at normal rate
+        elif self.dna.diet == DIET_SCAVENGER:
+            food_energy *= SCAVENGER_FOOD_PENALTY
 
         self.energy += food_energy
         self.food_eaten += 1

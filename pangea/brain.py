@@ -5,11 +5,12 @@ A simple 3-layer feedforward neural network using numpy.
 No training / backpropagation — weights are set by evolution.
 
 Architecture:
-    Input (10) → Hidden (8, tanh) → Output (2, tanh)
+    Input (12) → Hidden (8, tanh) → Output (2, tanh)
 
 Inputs:  [food_distance, food_angle, wall_distance, energy_level,
           nearest_creature_distance, nearest_creature_angle, own_speed,
-          predator_distance, predator_angle, under_attack]
+          predator_distance, predator_angle, under_attack,
+          biome_speed, biome_danger]
 Outputs: [turn_angle, thrust]
 """
 
@@ -33,7 +34,7 @@ class NeuralNetwork:
         Run a forward pass through the network.
 
         Args:
-            inputs: Array of shape (10,) with normalized sensor values.
+            inputs: Array of shape (12,) with normalized sensor values.
 
         Returns:
             Array of shape (2,) with output values in [-1, 1].

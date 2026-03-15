@@ -11,6 +11,7 @@ Controls:
     D      → Toggle debug overlay (vision ranges, energy bars)
     E      → Toggle evolution panel (minimap, trait graphs)
     S      → Toggle settings panel (right-side overlay with save/load)
+    F10    → Toggle maximized window (keeps title bar / taskbar)
     F11    → Toggle fullscreen
     1-6    → Select player tool (Isolation mode)
     ESC    → Pause menu (or close settings panel if open)
@@ -52,10 +53,12 @@ class Simulation:
         pygame.init()
         pygame.display.set_caption("Pangea - Evolution Simulator")
         self.fullscreen = False
-        self.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
+        self.maximized = False
+        self._windowed_size = (config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
+        self.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
         self.renderer = Renderer(self.screen)
-        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen)
+        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen, on_toggle_maximized=self._toggle_maximized)
 
         self.running = True
         self.paused = False
@@ -68,6 +71,13 @@ class Simulation:
         self.tools = PlayerTools()
         self.settings_panel = SettingsPanel()
 
+    def _rebuild_display(self) -> None:
+        """Update config, renderer, and menu after a screen size change."""
+        config.WINDOW_WIDTH = self.screen.get_width()
+        config.WINDOW_HEIGHT = self.screen.get_height()
+        self.renderer = Renderer(self.screen)
+        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen, on_toggle_maximized=self._toggle_maximized)
+
     def _toggle_fullscreen(self) -> None:
         """Toggle between windowed and fullscreen mode."""
         self.fullscreen = not self.fullscreen
@@ -76,12 +86,39 @@ class Simulation:
                 (0, 0), pygame.FULLSCREEN,
             )
         else:
-            self.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT))
-        # Update config so all modules see the new dimensions
-        config.WINDOW_WIDTH = self.screen.get_width()
-        config.WINDOW_HEIGHT = self.screen.get_height()
-        self.renderer = Renderer(self.screen)
-        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen)
+            self.screen = pygame.display.set_mode(self._windowed_size, pygame.RESIZABLE)
+        self.maximized = False
+        self._rebuild_display()
+
+    def _toggle_maximized(self) -> None:
+        """Toggle between windowed and maximized (keeps title bar / taskbar)."""
+        if self.fullscreen:
+            self._toggle_fullscreen()
+            return
+        import os
+        self.maximized = not self.maximized
+        if self.maximized:
+            info = pygame.display.Info()
+            w, h = info.current_w, info.current_h - 72
+            os.environ["SDL_VIDEO_WINDOW_POS"] = "0,0"
+            self.screen = pygame.display.set_mode((w, h), pygame.RESIZABLE)
+        else:
+            os.environ.pop("SDL_VIDEO_WINDOW_POS", None)
+            self.screen = pygame.display.set_mode(self._windowed_size, pygame.RESIZABLE)
+        self._rebuild_display()
+
+    def _handle_resize(self, width: int, height: int) -> None:
+        """Handle window resize events."""
+        if self.fullscreen:
+            return
+        self._windowed_size = (width, height)
+        self.screen = pygame.display.set_mode((width, height), pygame.RESIZABLE)
+        self._rebuild_display()
+
+    def _screen_to_world(self, sx: int, sy: int) -> tuple[float, float]:
+        """Convert screen coordinates to world coordinates."""
+        scale_x, scale_y = getattr(self.renderer, '_world_scale', (1.0, 1.0))
+        return sx * scale_x, sy * scale_y
 
     # ── Main Entry Point ─────────────────────────────────────
 
@@ -270,12 +307,12 @@ class Simulation:
 
             all_creatures = []
             for dna in new_a:
-                x = random.uniform(50, config.WINDOW_WIDTH - 50)
-                y = random.uniform(50, config.WINDOW_HEIGHT - 50)
+                x = random.uniform(50, self.settings.world_width - 50)
+                y = random.uniform(50, self.settings.world_height - 50)
                 all_creatures.append(Creature(dna, x, y, lineage="A"))
             for dna in new_b:
-                x = random.uniform(50, config.WINDOW_WIDTH - 50)
-                y = random.uniform(50, config.WINDOW_HEIGHT - 50)
+                x = random.uniform(50, self.settings.world_width - 50)
+                y = random.uniform(50, self.settings.world_height - 50)
                 all_creatures.append(Creature(dna, x, y, lineage="B"))
 
             world = World(all_creatures, settings=self.settings)
@@ -325,6 +362,10 @@ class Simulation:
                     self.running = False
                     return
 
+                if event.type == pygame.VIDEORESIZE:
+                    self._handle_resize(event.w, event.h)
+                    continue
+
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
                     self.settings_panel.toggle()
                     continue
@@ -338,6 +379,8 @@ class Simulation:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_F11:
                         self._toggle_fullscreen()
+                    elif event.key == pygame.K_F10:
+                        self._toggle_maximized()
                     elif event.key == pygame.K_SPACE:
                         self.paused = not self.paused
                     elif event.key == pygame.K_f:
@@ -401,7 +444,8 @@ class Simulation:
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
                     mx, my = event.pos
                     if not self.settings_panel.consumes_click(mx, my):
-                        if not self.renderer.try_select_creature(world, mx, my):
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        if not self.renderer.try_select_creature(world, wmx, wmy):
                             self.renderer.deselect_creature()
 
                 # Left-click for tools
@@ -419,16 +463,19 @@ class Simulation:
                                 self.tools.select_tool(tool)
                                 break
                     elif self.tools.active_tool == "none":
-                        if not self.renderer.try_select_creature(world, mx, my):
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        if not self.renderer.try_select_creature(world, wmx, wmy):
                             self.renderer.deselect_creature()
                     else:
-                        food_positions = self.tools.on_mouse_down(mx, my)
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        food_positions = self.tools.on_mouse_down(wmx, wmy)
                         for fx, fy in food_positions:
                             world.add_food_at(fx, fy)
 
                 if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                     mx, my = event.pos
-                    self.tools.on_mouse_up(mx, my)
+                    wmx, wmy = self._screen_to_world(mx, my)
+                    self.tools.on_mouse_up(wmx, wmy)
 
             # Update settings panel dragging
             self.settings = self.settings_panel.update_dragging(self.settings)
@@ -523,9 +570,8 @@ class Simulation:
                 tools=self.tools,
                 show_toolbar=True,
                 fast_forward=self.fast_forward_multiplier if self.fast_forward else 0,
+                debug=self.debug_mode,
             )
-            if self.debug_mode:
-                self.renderer.draw_debug(world)
             self.renderer.draw_creature_stats(world, "freeplay")
             if self.show_evolution_panel:
                 self.renderer.draw_evolution_panel(
@@ -558,6 +604,10 @@ class Simulation:
                     self.running = False
                     return "main_menu"
 
+                if event.type == pygame.VIDEORESIZE:
+                    self._handle_resize(event.w, event.h)
+                    continue
+
                 # S key toggles the settings panel
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
                     self.settings_panel.toggle()
@@ -574,6 +624,8 @@ class Simulation:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_F11:
                         self._toggle_fullscreen()
+                    elif event.key == pygame.K_F10:
+                        self._toggle_maximized()
                     elif event.key == pygame.K_SPACE:
                         self.paused = not self.paused
                     elif event.key == pygame.K_f:
@@ -608,7 +660,8 @@ class Simulation:
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
                     mx, my = event.pos
                     if not self.settings_panel.consumes_click(mx, my):
-                        if not self.renderer.try_select_creature(world, mx, my):
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        if not self.renderer.try_select_creature(world, wmx, wmy):
                             self.renderer.deselect_creature()
 
                 if mode == "isolation":
@@ -629,23 +682,27 @@ class Simulation:
                                     break
                         elif self.tools.active_tool == "none":
                             # No tool active — try to select a creature
-                            if not self.renderer.try_select_creature(world, mx, my):
+                            wmx, wmy = self._screen_to_world(mx, my)
+                            if not self.renderer.try_select_creature(world, wmx, wmy):
                                 self.renderer.deselect_creature()
                         else:
                             # World click — use active tool
-                            food_positions = self.tools.on_mouse_down(mx, my)
+                            wmx, wmy = self._screen_to_world(mx, my)
+                            food_positions = self.tools.on_mouse_down(wmx, wmy)
                             for fx, fy in food_positions:
                                 world.add_food_at(fx, fy)
 
                     if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                         mx, my = event.pos
-                        self.tools.on_mouse_up(mx, my)
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        self.tools.on_mouse_up(wmx, wmy)
 
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     # Convergence mode — left-click to inspect
                     mx, my = event.pos
                     if not self.settings_panel.consumes_click(mx, my):
-                        if not self.renderer.try_select_creature(world, mx, my):
+                        wmx, wmy = self._screen_to_world(mx, my)
+                        if not self.renderer.try_select_creature(world, wmx, wmy):
                             self.renderer.deselect_creature()
 
             # Update settings panel dragging
@@ -668,9 +725,8 @@ class Simulation:
                 tools=self.tools if mode == "isolation" else None,
                 show_toolbar=show_toolbar,
                 fast_forward=self.fast_forward_multiplier if self.fast_forward else 0,
+                debug=self.debug_mode,
             )
-            if self.debug_mode:
-                self.renderer.draw_debug(world)
             self.renderer.draw_creature_stats(world, mode)
             if self.show_evolution_panel:
                 self.renderer.draw_evolution_panel(
@@ -689,8 +745,8 @@ class Simulation:
         """Create a World with creatures from a list of DNA."""
         creatures = []
         for dna in dna_list:
-            x = random.uniform(50, config.WINDOW_WIDTH - 50)
-            y = random.uniform(50, config.WINDOW_HEIGHT - 50)
+            x = random.uniform(50, self.settings.world_width - 50)
+            y = random.uniform(50, self.settings.world_height - 50)
             creatures.append(Creature(dna, x, y, lineage=lineage))
         return World(creatures, settings=self.settings, tools=self.tools)
 
@@ -701,25 +757,25 @@ class Simulation:
         creatures = []
 
         for dna in dna_a[:CREATURES_PER_LINEAGE]:
-            x = random.uniform(50, config.WINDOW_WIDTH - 50)
-            y = random.uniform(50, config.WINDOW_HEIGHT - 50)
+            x = random.uniform(50, self.settings.world_width - 50)
+            y = random.uniform(50, self.settings.world_height - 50)
             creatures.append(Creature(dna, x, y, lineage="A"))
 
         for dna in dna_b[:CREATURES_PER_LINEAGE]:
-            x = random.uniform(50, config.WINDOW_WIDTH - 50)
-            y = random.uniform(50, config.WINDOW_HEIGHT - 50)
+            x = random.uniform(50, self.settings.world_width - 50)
+            y = random.uniform(50, self.settings.world_height - 50)
             creatures.append(Creature(dna, x, y, lineage="B"))
 
         while len([c for c in creatures if c.lineage == "A"]) < CREATURES_PER_LINEAGE:
             src = random.choice([c for c in creatures if c.lineage == "A"])
-            x = random.uniform(50, config.WINDOW_WIDTH - 50)
-            y = random.uniform(50, config.WINDOW_HEIGHT - 50)
+            x = random.uniform(50, self.settings.world_width - 50)
+            y = random.uniform(50, self.settings.world_height - 50)
             creatures.append(Creature(src.dna, x, y, lineage="A"))
 
         while len([c for c in creatures if c.lineage == "B"]) < CREATURES_PER_LINEAGE:
             src = random.choice([c for c in creatures if c.lineage == "B"])
-            x = random.uniform(50, config.WINDOW_WIDTH - 50)
-            y = random.uniform(50, config.WINDOW_HEIGHT - 50)
+            x = random.uniform(50, self.settings.world_width - 50)
+            y = random.uniform(50, self.settings.world_height - 50)
             creatures.append(Creature(src.dna, x, y, lineage="B"))
 
         return World(creatures, settings=self.settings)

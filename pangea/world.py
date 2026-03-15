@@ -187,13 +187,13 @@ class World:
         settings: SimSettings | None = None,
         tools: PlayerTools | None = None,
     ) -> None:
-        self.width = width if width is not None else config.WINDOW_WIDTH
-        self.height = height if height is not None else config.WINDOW_HEIGHT
+        self.settings = settings or SimSettings()
+        self.width = width if width is not None else self.settings.world_width
+        self.height = height if height is not None else self.settings.world_height
         self.creatures = creatures
         self.food: list[Food] = []
         self.elapsed_time = 0.0
         self.generation = 1
-        self.settings = settings or SimSettings()
         self.tools = tools
         self.season_time = 0.0
         self.freeplay = False  # Set True for continuous breeding mode
@@ -514,6 +514,9 @@ class World:
     def _reward_scavengers(self, newly_dead: list[Creature]) -> None:
         """Give energy to scavengers near recently dead creatures and spawn corpses."""
         for dead in newly_dead:
+            # Scavengers can't eat other scavengers
+            if dead.dna.diet == DIET_SCAVENGER:
+                continue
             # Instant proximity bonus for scavengers already nearby
             for creature in self.creatures:
                 if not creature.alive or creature.dna.diet != DIET_SCAVENGER:
@@ -592,19 +595,25 @@ class World:
             if not creature.alive:
                 continue
 
-            # Sense the environment (including predators)
+            # Compute biome info at creature's position
+            speed_mult = self.get_speed_multiplier(creature.x, creature.y)
+            biome = self.get_biome_at(creature.x, creature.y)
+            biome_danger = 0.0
+            if biome is not None:
+                biome_danger = BIOME_ENERGY_DRAIN.get(biome.biome_type, 0.0)
+
+            # Sense the environment (including predators and biome)
             inputs = creature.sense(
                 self.food, self.width, self.height, wrap,
                 vision_multiplier=vision_multiplier,
                 creatures=self.creatures,
                 predators=self.predators,
+                biome_speed=speed_mult,
+                biome_danger=biome_danger,
             )
 
             # Think and act
             creature.think_and_act(inputs)
-
-            # Compute biome speed multiplier at creature's position
-            speed_mult = self.get_speed_multiplier(creature.x, creature.y)
 
             # Update physics (with biome speed multiplier)
             creature.update(dt, speed_multiplier=speed_mult)

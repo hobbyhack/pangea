@@ -77,7 +77,7 @@ class TestPredators:
         inputs = creature.sense([], 800, 600, predators=[predator])
         # Predator distance sensor (index 7) should be < 1.0
         assert inputs[7] < 1.0
-        assert inputs.shape == (10,)
+        assert inputs.shape == (12,)
 
     def test_no_predator_sensor_defaults(self):
         """Without predators, predator sensors should be at defaults."""

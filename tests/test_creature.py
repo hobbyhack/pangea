@@ -44,11 +44,11 @@ class TestCreature:
         assert c.age == 0.0
 
     def test_sensor_output_shape(self):
-        """Sense should return array of shape (10,)."""
+        """Sense should return array of shape (12,)."""
         c = self._make_creature()
         food = [Food(x=150, y=100)]
         inputs = c.sense(food, 800, 600)
-        assert inputs.shape == (10,)
+        assert inputs.shape == (12,)
 
     def test_sensor_food_distance_normalized(self):
         """Food distance should be normalized between 0 and 1."""
@@ -167,13 +167,13 @@ class TestCreature:
         c.eat(20.0)
         assert c.energy == pytest.approx(50.0 + 20.0 * CARNIVORE_FOOD_PENALTY)
 
-    def test_scavenger_normal_food(self):
-        """Scavengers should eat food at normal rate."""
+    def test_scavenger_food_penalty(self):
+        """Scavengers should eat food at reduced rate (0.7x)."""
         c = self._make_creature()
         c.dna.diet = DIET_SCAVENGER
         c.energy = 50.0
         c.eat(20.0)
-        assert c.energy == pytest.approx(70.0)
+        assert c.energy == pytest.approx(64.0)  # 50 + 20*0.7
 
     def test_gain_energy(self):
         """gain_energy should add energy without food count."""

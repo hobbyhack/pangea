@@ -62,6 +62,7 @@ class Menu:
         self,
         surface: pygame.Surface,
         on_toggle_fullscreen: object = None,
+        on_toggle_maximized: object = None,
     ) -> None:
         self.surface = surface
         self.font = pygame.font.SysFont("consolas", 20)
@@ -70,16 +71,17 @@ class Menu:
         self.font_subtitle = pygame.font.SysFont("consolas", 16)
         self.font_heading = pygame.font.SysFont("consolas", 18, bold=True)
         self._on_toggle_fullscreen = on_toggle_fullscreen
+        self._on_toggle_maximized = on_toggle_maximized
 
     def _handle_fullscreen(self, event: pygame.event.Event) -> bool:
-        """Check for F11 and invoke fullscreen callback. Returns True if handled."""
-        if (
-            event.type == pygame.KEYDOWN
-            and event.key == pygame.K_F11
-            and self._on_toggle_fullscreen is not None
-        ):
-            self._on_toggle_fullscreen()
-            return True
+        """Check for F10/F11 and invoke window mode callbacks. Returns True if handled."""
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_F11 and self._on_toggle_fullscreen is not None:
+                self._on_toggle_fullscreen()
+                return True
+            if event.key == pygame.K_F10 and self._on_toggle_maximized is not None:
+                self._on_toggle_maximized()
+                return True
         return False
 
     # ── Main Menu ────────────────────────────────────────────

@@ -6,9 +6,13 @@ All tunable parameters are gathered here for easy access.
 """
 
 # ── Window Settings ──────────────────────────────────────────
-WINDOW_WIDTH = 1200          # Simulation window width in pixels
-WINDOW_HEIGHT = 800          # Simulation window height in pixels
+WINDOW_WIDTH = 1024          # Simulation window width in pixels
+WINDOW_HEIGHT = 768          # Simulation window height in pixels
 FPS = 60                     # Frames per second (rendering speed)
+
+# ── Play Area (World) Dimensions ────────────────────────────
+WORLD_WIDTH = 1200           # Play area width in pixels
+WORLD_HEIGHT = 800           # Play area height in pixels
 
 # ── Population & Generations ─────────────────────────────────
 POPULATION_SIZE = 50         # Number of creatures per generation
@@ -63,10 +67,10 @@ EFFICIENCY_BASE = 0.5        # Minimum efficiency multiplier
 EFFICIENCY_SCALE = 0.02      # 25 pts → efficiency 1.0 (neutral)
 
 # ── Neural Network ───────────────────────────────────────────
-NN_INPUT_SIZE = 10           # Inputs: food dist, food angle, wall dist, energy,
+NN_INPUT_SIZE = 12           # Inputs: food dist, food angle, wall dist, energy,
                              #         nearest creature dist, nearest creature angle,
                              #         own speed, predator dist, predator angle,
-                             #         under_attack
+                             #         under_attack, biome_speed, biome_danger
 NN_HIDDEN_SIZE = 8           # Hidden layer neurons
 NN_OUTPUT_SIZE = 2           # Outputs: turn angle, thrust
 
@@ -155,9 +159,10 @@ CARNIVORE_FOOD_PENALTY = 0.5    # Food energy multiplier for carnivores
 CARNIVORE_ATTACK_RANGE = 2.0    # Attack range as multiplier of own radius
 CARNIVORE_ATTACK_DAMAGE = 3.0   # Energy drained from victim per second
 CARNIVORE_ENERGY_STEAL = 0.5    # Fraction of damage converted to own energy
-SCAVENGER_DEATH_RADIUS = 80.0   # Range to detect nearby deaths
-SCAVENGER_DEATH_ENERGY = 15.0   # Energy gained per nearby death
-CORPSE_ENERGY = 25.0            # Energy in a corpse food item
+SCAVENGER_FOOD_PENALTY = 0.7    # Food energy multiplier for scavengers
+SCAVENGER_DEATH_RADIUS = 60.0   # Range to detect nearby deaths
+SCAVENGER_DEATH_ENERGY = 8.0    # Energy gained per nearby death
+CORPSE_ENERGY = 15.0            # Energy in a corpse food item
 CORPSE_DECAY_TIME = 10.0        # Seconds before a corpse disappears
 CORPSE_RADIUS = 5.0             # Radius of corpse food items
 

@@ -40,7 +40,11 @@ class SimSettings:
     trait_mutation_range: int = config.TRAIT_MUTATION_RANGE
     weight_clamp: float = 0.0
 
-    # ── World / Food ─────────────────────────────────────────
+    # ── World / Play Area ─────────────────────────────────────
+    world_width: int = config.WORLD_WIDTH
+    world_height: int = config.WORLD_HEIGHT
+
+    # ── Food ───────────────────────────────────────────────────
     food_spawn_rate: float = config.FOOD_SPAWN_RATE
     food_energy: float = config.FOOD_ENERGY
     initial_food_count: int = config.INITIAL_FOOD_COUNT
@@ -179,6 +183,11 @@ SETTING_DEFS: list[SettingDef] = [
                tooltip="Max points a trait (speed/size/vision/efficiency) can shift per generation"),
     SettingDef("weight_clamp", "Weight Clamp", 0.0, 10.0, 0.5, ".1f", "Mutation",
                tooltip="Clamp NN weights to [-value, +value] after mutation (0 = no clamping)"),
+    # World Size
+    SettingDef("world_width", "World Width", 800, 3840, 100, ".0f", "World Size",
+               tooltip="Width of the play area in pixels (takes effect on restart/next gen)"),
+    SettingDef("world_height", "World Height", 600, 2160, 100, ".0f", "World Size",
+               tooltip="Height of the play area in pixels (takes effect on restart/next gen)"),
     # Environment
     SettingDef("food_spawn_rate", "Food Spawn Rate", 0.0, 5.0, 0.1, ".1f", "Environment",
                tooltip="New food items spawned per second during a generation"),
