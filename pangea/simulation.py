@@ -58,7 +58,7 @@ class Simulation:
         self.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
         self.renderer = Renderer(self.screen)
-        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen, on_toggle_maximized=self._toggle_maximized)
+        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen, on_toggle_maximized=self._toggle_maximized, on_resize=self._handle_resize)
 
         self.running = True
         self.paused = False
@@ -76,7 +76,7 @@ class Simulation:
         config.WINDOW_WIDTH = self.screen.get_width()
         config.WINDOW_HEIGHT = self.screen.get_height()
         self.renderer = Renderer(self.screen)
-        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen, on_toggle_maximized=self._toggle_maximized)
+        self.menu.surface = self.screen
 
     def _toggle_fullscreen(self) -> None:
         """Toggle between windowed and fullscreen mode."""

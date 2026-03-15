@@ -331,6 +331,11 @@ class World:
             lifetime=self.settings.food_decay_time,
         )
 
+    def _at_food_max(self) -> bool:
+        """Return True if food count is at or above the configured maximum."""
+        food_max = self.settings.food_max
+        return food_max > 0 and len(self.food) >= food_max
+
     def _random_food(self) -> Food:
         """Create a food item at a random position."""
         margin = FOOD_RADIUS
@@ -373,19 +378,28 @@ class World:
             if alive > cap:
                 multiplier *= self.settings.freeplay_overcapacity_food_penalty
 
-        self._food_spawn_accum += self.settings.food_spawn_rate * multiplier * dt
-        while self._food_spawn_accum >= 1.0:
-            self._food_spawn_accum -= 1.0
-            # Spawn a cluster instead of a single food item
-            margin = FOOD_RADIUS
-            cx = random.uniform(margin, self.width - margin)
-            cy = random.uniform(margin, self.height - margin)
-            self._spawn_cluster(cx, cy)
+        # Enforce food_max: skip spawning if already at or above max
+        if self._at_food_max():
+            self._food_spawn_accum = 0.0
+        else:
+            self._food_spawn_accum += self.settings.food_spawn_rate * multiplier * dt
+            while self._food_spawn_accum >= 1.0:
+                self._food_spawn_accum -= 1.0
+                if self._at_food_max():
+                    self._food_spawn_accum = 0.0
+                    break
+                # Spawn a cluster instead of a single food item
+                margin = FOOD_RADIUS
+                cx = random.uniform(margin, self.width - margin)
+                cy = random.uniform(margin, self.height - margin)
+                self._spawn_cluster(cx, cy)
 
         # Bounty zones spawn extra food nearby
         if self.tools:
             for zone in self.tools.zones:
                 if zone.zone_type == "bounty" and random.random() < 0.05 * zone.opacity:
+                    if self._at_food_max():
+                        break
                     angle = random.uniform(0, 2 * math.pi)
                     dist = random.uniform(0, zone.radius * 0.8)
                     fx = zone.x + math.cos(angle) * dist
@@ -393,6 +407,13 @@ class World:
                     fx = max(FOOD_RADIUS, min(self.width - FOOD_RADIUS, fx))
                     fy = max(FOOD_RADIUS, min(self.height - FOOD_RADIUS, fy))
                     self.food.append(self._make_food(fx, fy))
+
+        # Enforce food_min: top up if below minimum (cap per frame to avoid spikes)
+        food_min = self.settings.food_min
+        if food_min > 0 and len(self.food) < food_min:
+            deficit = food_min - len(self.food)
+            for _ in range(min(deficit, self.settings.food_cluster_size)):
+                self.food.append(self._random_food())
 
     def add_food_at(self, x: float, y: float) -> None:
         """Add a food item at a specific position (from player tool)."""
@@ -434,6 +455,12 @@ class World:
 
             for i in reversed(eaten_indices):
                 self.food.pop(i)
+
+            # Chance to spawn replacement food at a random location
+            if self.settings.food_respawn_chance > 0:
+                for _ in eaten_indices:
+                    if random.random() < self.settings.food_respawn_chance:
+                        self.food.append(self._random_food())
 
     # ── Boundary Enforcement ─────────────────────────────────
 

@@ -45,6 +45,9 @@ INITIAL_FOOD_COUNT = 30      # Food items present at the start of each generatio
 WORLD_WRAP = False           # True = toroidal wrap-around, False = bounded walls
 FOOD_DECAY_TIME = 15.0       # Seconds before uneaten food disappears
 FOOD_CLUSTER_SIZE = 4        # Number of food items spawned per cluster
+FOOD_RESPAWN_CHANCE = 0.0    # Chance (0-1) to spawn a new food when one is eaten
+FOOD_MIN = 0                 # Minimum food items on the map (0 = no minimum)
+FOOD_MAX = 0                 # Maximum food items on the map (0 = no limit)
 SEASON_LENGTH = 60.0         # Seconds per full seasonal cycle
 SEASON_MIN_RATE = 0.2        # Multiplier at seasonal minimum
 

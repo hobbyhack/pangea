@@ -63,6 +63,7 @@ class Menu:
         surface: pygame.Surface,
         on_toggle_fullscreen: object = None,
         on_toggle_maximized: object = None,
+        on_resize: object = None,
     ) -> None:
         self.surface = surface
         self.font = pygame.font.SysFont("consolas", 20)
@@ -72,19 +73,46 @@ class Menu:
         self.font_heading = pygame.font.SysFont("consolas", 18, bold=True)
         self._on_toggle_fullscreen = on_toggle_fullscreen
         self._on_toggle_maximized = on_toggle_maximized
+        self._on_resize = on_resize
 
-    def _handle_fullscreen(self, event: pygame.event.Event) -> bool:
-        """Check for F10/F11 and invoke window mode callbacks. Returns True if handled."""
+    def _handle_window_event(self, event: pygame.event.Event) -> bool:
+        """Check for F10/F11/VIDEORESIZE and invoke callbacks. Returns True if handled."""
+        if event.type == pygame.VIDEORESIZE:
+            if self._on_resize is not None:
+                self._on_resize(event.w, event.h)
+                self.surface = pygame.display.get_surface()
+            return True
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_F11 and self._on_toggle_fullscreen is not None:
                 self._on_toggle_fullscreen()
+                self.surface = pygame.display.get_surface()
                 return True
             if event.key == pygame.K_F10 and self._on_toggle_maximized is not None:
                 self._on_toggle_maximized()
+                self.surface = pygame.display.get_surface()
                 return True
         return False
 
     # ── Main Menu ────────────────────────────────────────────
+
+    def _build_main_buttons(self) -> dict[str, Button]:
+        """Build main menu buttons centered on the current window size."""
+        cx = config.WINDOW_WIDTH // 2
+        cy = config.WINDOW_HEIGHT // 2
+        btn_w, btn_h = 280, 50
+        start_y = cy - 60
+        return {
+            "isolation": Button(cx - btn_w // 2, start_y, btn_w, btn_h, "Isolation Mode",
+                                color=(40, 70, 50), hover_color=(55, 100, 65)),
+            "convergence": Button(cx - btn_w // 2, start_y + 70, btn_w, btn_h, "Convergence Mode",
+                                  color=(50, 45, 75), hover_color=(70, 60, 110)),
+            "freeplay": Button(cx - btn_w // 2, start_y + 140, btn_w, btn_h, "Freeplay Mode",
+                               color=(60, 55, 40), hover_color=(90, 80, 55)),
+            "settings": Button(cx - btn_w // 2, start_y + 210, btn_w, btn_h, "Settings",
+                               color=(55, 55, 65), hover_color=(75, 75, 90)),
+            "quit": Button(cx - btn_w // 2, start_y + 280, btn_w, btn_h, "Quit",
+                           color=(65, 40, 40), hover_color=(90, 50, 50)),
+        }
 
     def show_main_menu(self, settings: SimSettings | None = None) -> tuple[str, SimSettings]:
         """
@@ -96,21 +124,7 @@ class Menu:
         if settings is None:
             settings = SimSettings()
 
-        cx = config.WINDOW_WIDTH // 2
-        btn_w, btn_h = 280, 50
-
-        buttons = {
-            "isolation": Button(cx - btn_w // 2, 330, btn_w, btn_h, "Isolation Mode",
-                                color=(40, 70, 50), hover_color=(55, 100, 65)),
-            "convergence": Button(cx - btn_w // 2, 400, btn_w, btn_h, "Convergence Mode",
-                                  color=(50, 45, 75), hover_color=(70, 60, 110)),
-            "freeplay": Button(cx - btn_w // 2, 470, btn_w, btn_h, "Freeplay Mode",
-                               color=(60, 55, 40), hover_color=(90, 80, 55)),
-            "settings": Button(cx - btn_w // 2, 540, btn_w, btn_h, "Settings",
-                               color=(55, 55, 65), hover_color=(75, 75, 90)),
-            "quit": Button(cx - btn_w // 2, 610, btn_w, btn_h, "Quit",
-                           color=(65, 40, 40), hover_color=(90, 50, 50)),
-        }
+        buttons = self._build_main_buttons()
 
         clock = pygame.time.Clock()
         frame = 0
@@ -122,7 +136,8 @@ class Menu:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return ("quit", settings)
-                if self._handle_fullscreen(event):
+                if self._handle_window_event(event):
+                    buttons = self._build_main_buttons()
                     continue
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     return ("quit", settings)
@@ -131,28 +146,32 @@ class Menu:
                         if btn.is_clicked(mouse_pos):
                             if name == "settings":
                                 settings = self.show_settings(settings)
+                                buttons = self._build_main_buttons()
                             else:
                                 return (name, settings)
 
             # Draw
             self._draw_menu_bg(frame)
 
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
+
             # Title with glow effect
             title_color = self._pulse_color((80, 160, 255), (120, 200, 255), frame, 120)
             title = self.font_title.render("PANGEA", True, title_color)
-            title_rect = title.get_rect(center=(cx, 180))
+            title_rect = title.get_rect(center=(cx, cy - 210))
             self.surface.blit(title, title_rect)
 
             # Subtitle
             sub = self.font_subtitle.render(
                 "Distributed Evolution Simulator", True, (120, 130, 160)
             )
-            sub_rect = sub.get_rect(center=(cx, 240))
+            sub_rect = sub.get_rect(center=(cx, cy - 150))
             self.surface.blit(sub, sub_rect)
 
             # Version
             ver = self.font_small.render("v0.1.0", True, (70, 70, 90))
-            self.surface.blit(ver, ver.get_rect(center=(cx, 270)))
+            self.surface.blit(ver, ver.get_rect(center=(cx, cy - 120)))
 
             for btn in buttons.values():
                 btn.update(mouse_pos)
@@ -162,6 +181,26 @@ class Menu:
             clock.tick(30)
 
     # ── Settings Panel ──────────────────────────────────────
+
+    def _settings_layout(self) -> dict:
+        """Compute settings panel layout based on current window size."""
+        w, h = config.WINDOW_WIDTH, config.WINDOW_HEIGHT
+        panel_x = max(40, w // 6)
+        panel_w = w - panel_x * 2
+        slider_w = min(250, panel_w // 2)
+        header_h = 120
+        footer_h = 80
+        scroll_area_h = h - header_h - footer_h
+        btn_y = h - footer_h + 15
+        return {
+            "panel_x": panel_x, "panel_w": panel_w, "slider_w": slider_w,
+            "header_h": header_h, "footer_h": footer_h,
+            "scroll_area_h": scroll_area_h, "btn_y": btn_y,
+            "back_btn": Button(w // 2 - 80, btn_y, 160, 45, "Back",
+                               color=(50, 60, 80), hover_color=(70, 80, 110)),
+            "reset_btn": Button(w // 2 + 100, btn_y, 140, 45, "Reset",
+                                color=(80, 45, 45), hover_color=(110, 60, 60)),
+        }
 
     def show_settings(self, settings: SimSettings) -> SimSettings:
         """
@@ -174,14 +213,8 @@ class Menu:
         settings = settings.copy()
         clock = pygame.time.Clock()
 
-        # Layout constants
-        panel_x = 200
-        panel_w = config.WINDOW_WIDTH - 400
-        slider_w = 250
         slider_h = 8
         row_h = 36
-        header_h = 120  # fixed header area (title + hint)
-        footer_h = 80   # fixed footer area (buttons)
 
         # Build slider data with positions relative to content top (0)
         sliders: list[dict] = []
@@ -199,15 +232,9 @@ class Menu:
             y += row_h
 
         content_height = y
-        scroll_area_h = config.WINDOW_HEIGHT - header_h - footer_h
-        max_scroll = max(0, content_height - scroll_area_h)
+        lay = self._settings_layout()
+        max_scroll = max(0, content_height - lay["scroll_area_h"])
         scroll_y = 0
-
-        btn_y = config.WINDOW_HEIGHT - footer_h + 15
-        back_btn = Button(config.WINDOW_WIDTH // 2 - 80, btn_y, 160, 45, "Back",
-                          color=(50, 60, 80), hover_color=(70, 80, 110))
-        reset_btn = Button(config.WINDOW_WIDTH // 2 + 100, btn_y, 140, 45, "Reset",
-                           color=(80, 45, 45), hover_color=(110, 60, 60))
 
         hovered_tooltip = ""
 
@@ -217,6 +244,11 @@ class Menu:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return settings
+                if self._handle_window_event(event):
+                    lay = self._settings_layout()
+                    max_scroll = max(0, content_height - lay["scroll_area_h"])
+                    scroll_y = min(scroll_y, max_scroll)
+                    continue
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         return settings
@@ -225,11 +257,17 @@ class Menu:
                     scroll_y = max(0, min(max_scroll, scroll_y - event.y * 30))
 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    if back_btn.is_clicked(mouse_pos):
+                    if lay["back_btn"].is_clicked(mouse_pos):
                         return settings
-                    if reset_btn.is_clicked(mouse_pos):
+                    if lay["reset_btn"].is_clicked(mouse_pos):
                         settings = SimSettings()
                         continue
+
+                    panel_x = lay["panel_x"]
+                    panel_w = lay["panel_w"]
+                    slider_w = lay["slider_w"]
+                    header_h = lay["header_h"]
+                    footer_h = lay["footer_h"]
 
                     # Check sliders / toggles
                     for s in sliders:
@@ -254,6 +292,14 @@ class Menu:
                 if event.type == pygame.MOUSEBUTTONUP:
                     for s in sliders:
                         s["dragging"] = False
+
+            # Read current layout values for drawing
+            panel_x = lay["panel_x"]
+            panel_w = lay["panel_w"]
+            slider_w = lay["slider_w"]
+            header_h = lay["header_h"]
+            footer_h = lay["footer_h"]
+            scroll_area_h = lay["scroll_area_h"]
 
             # Update dragging sliders (skip toggles)
             for s in sliders:
@@ -356,10 +402,10 @@ class Menu:
             # Footer buttons (fixed)
             footer_bg = pygame.Rect(0, config.WINDOW_HEIGHT - footer_h, config.WINDOW_WIDTH, footer_h)
             pygame.draw.rect(self.surface, COLOR_MENU_BG, footer_bg)
-            back_btn.update(mouse_pos)
-            back_btn.draw(self.surface, self.font)
-            reset_btn.update(mouse_pos)
-            reset_btn.draw(self.surface, self.font)
+            lay["back_btn"].update(mouse_pos)
+            lay["back_btn"].draw(self.surface, self.font)
+            lay["reset_btn"].update(mouse_pos)
+            lay["reset_btn"].draw(self.surface, self.font)
 
             # Tooltip overlay (drawn last, on top of everything)
             if hovered_tooltip:
@@ -394,22 +440,27 @@ class Menu:
         scroll_offset = 0
         max_visible = 12
 
-        cx = config.WINDOW_WIDTH // 2
         clock = pygame.time.Clock()
 
         while True:
             mouse_pos = pygame.mouse.get_pos()
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
+            list_top = cy - 170
+            start_y = cy + 260
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return None
+                if self._handle_window_event(event):
+                    continue
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         return None
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     for i in range(min(max_visible, len(files) - scroll_offset)):
                         idx = i + scroll_offset
-                        item_rect = pygame.Rect(cx - 200, 200 + i * 35, 400, 30)
+                        item_rect = pygame.Rect(cx - 200, list_top + i * 35, 400, 30)
                         if item_rect.collidepoint(mouse_pos):
                             if idx in selected:
                                 selected.remove(idx)
@@ -417,7 +468,7 @@ class Menu:
                                 selected.append(idx)
 
                     if len(selected) == 2:
-                        start_rect = pygame.Rect(cx - 100, 650, 200, 45)
+                        start_rect = pygame.Rect(cx - 100, start_y, 200, 45)
                         if start_rect.collidepoint(mouse_pos):
                             file_a = str(species_path / files[selected[0]])
                             file_b = str(species_path / files[selected[1]])
@@ -429,17 +480,17 @@ class Menu:
             self.surface.fill(COLOR_MENU_BG)
 
             title = self.font.render("Select 2 Species Files", True, COLOR_HUD_TEXT)
-            self.surface.blit(title, title.get_rect(center=(cx, 130)))
+            self.surface.blit(title, title.get_rect(center=(cx, list_top - 70)))
 
             hint = self.font_subtitle.render(
                 "Click to select (Red = Species A, Blue = Species B)",
                 True, (120, 120, 150),
             )
-            self.surface.blit(hint, hint.get_rect(center=(cx, 165)))
+            self.surface.blit(hint, hint.get_rect(center=(cx, list_top - 35)))
 
             for i in range(min(max_visible, len(files) - scroll_offset)):
                 idx = i + scroll_offset
-                item_rect = pygame.Rect(cx - 200, 200 + i * 35, 400, 30)
+                item_rect = pygame.Rect(cx - 200, list_top + i * 35, 400, 30)
 
                 if idx in selected:
                     sel_idx = selected.index(idx)
@@ -459,7 +510,7 @@ class Menu:
                 self.surface.blit(text, (item_rect.x + 10, item_rect.y + 7))
 
             if len(selected) == 2:
-                start_rect = pygame.Rect(cx - 100, 650, 200, 45)
+                start_rect = pygame.Rect(cx - 100, start_y, 200, 45)
                 start_hovered = start_rect.collidepoint(mouse_pos)
                 start_color = (60, 90, 140) if start_hovered else (45, 65, 105)
                 pygame.draw.rect(self.surface, start_color, start_rect, border_radius=6)
@@ -471,13 +522,8 @@ class Menu:
 
     # ── Pause Menu ───────────────────────────────────────────
 
-    def show_pause_menu(self, mode: str = "isolation", settings: SimSettings | None = None) -> tuple[str, SimSettings | None]:
-        """
-        Show the pause overlay with options.
-
-        Returns:
-            Tuple of (action_string, updated_settings_or_None).
-        """
+    def _build_pause_buttons(self, mode: str) -> tuple[list[str], dict[str, Button]]:
+        """Build pause menu buttons centered on the current window size."""
         cx = config.WINDOW_WIDTH // 2
         cy = config.WINDOW_HEIGHT // 2
         btn_w, btn_h = 220, 45
@@ -504,7 +550,16 @@ class Menu:
                 cx - btn_w // 2, cy - 80 + i * 55, btn_w, btn_h, label,
                 color=c, hover_color=hc,
             )
+        return options, buttons
 
+    def show_pause_menu(self, mode: str = "isolation", settings: SimSettings | None = None) -> tuple[str, SimSettings | None]:
+        """
+        Show the pause overlay with options.
+
+        Returns:
+            Tuple of (action_string, updated_settings_or_None).
+        """
+        _, buttons = self._build_pause_buttons(mode)
         clock = pygame.time.Clock()
 
         while True:
@@ -513,6 +568,9 @@ class Menu:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return ("main_menu", settings)
+                if self._handle_window_event(event):
+                    _, buttons = self._build_pause_buttons(mode)
+                    continue
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE or event.key == pygame.K_SPACE:
                         return ("resume", settings)
@@ -521,11 +579,15 @@ class Menu:
                         if btn.is_clicked(mouse_pos):
                             if name == "settings" and settings is not None:
                                 settings = self.show_settings(settings)
+                                _, buttons = self._build_pause_buttons(mode)
                                 continue
                             if name == "restart":
                                 if not self._show_confirm("Restart simulation?", "All progress will be lost."):
                                     continue
                             return (name, settings)
+
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
 
             overlay = pygame.Surface((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 160))
@@ -552,7 +614,6 @@ class Menu:
         b_gens: int,
     ) -> None:
         """Show convergence mode results."""
-        cx = config.WINDOW_WIDTH // 2
         clock = pygame.time.Clock()
         frame = 0
 
@@ -561,12 +622,17 @@ class Menu:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return
+                if self._handle_window_event(event):
+                    continue
                 if event.type == pygame.KEYDOWN:
                     return
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     return
 
             self._draw_menu_bg(frame)
+
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
 
             if winner == "tie":
                 title_text = "IT'S A TIE!"
@@ -579,7 +645,7 @@ class Menu:
                 title_color = (90, 140, 255)
 
             title = self.font_title.render(title_text, True, title_color)
-            self.surface.blit(title, title.get_rect(center=(cx, 200)))
+            self.surface.blit(title, title.get_rect(center=(cx, cy - 100)))
 
             lines = [
                 f"Red (A):  {a_food} food eaten, survived {a_gens} generations",
@@ -587,7 +653,7 @@ class Menu:
                 "",
                 "Press any key to return to menu",
             ]
-            y = 350
+            y = cy + 50
             for line in lines:
                 text = self.font.render(line, True, COLOR_HUD_TEXT)
                 self.surface.blit(text, text.get_rect(center=(cx, y)))
@@ -670,12 +736,11 @@ class Menu:
         label = self.font_small.render("ON" if on else "OFF", True, (180, 190, 210))
         self.surface.blit(label, (x + w + 8, y + 2))
 
-    def _show_confirm(self, title: str, subtitle: str = "") -> bool:
-        """Show a confirmation dialog. Returns True if confirmed, False if cancelled."""
+    def _build_confirm_buttons(self) -> tuple:
+        """Build confirmation dialog buttons centered on the current window size."""
         cx = config.WINDOW_WIDTH // 2
         cy = config.WINDOW_HEIGHT // 2
         btn_w, btn_h = 140, 45
-
         yes_btn = Button(
             cx - btn_w - 15, cy + 40, btn_w, btn_h, "Yes, Restart",
             color=(120, 50, 50), hover_color=(160, 65, 65),
@@ -684,6 +749,11 @@ class Menu:
             cx + 15, cy + 40, btn_w, btn_h, "Cancel",
             color=(50, 60, 80), hover_color=(70, 80, 110),
         )
+        return yes_btn, no_btn
+
+    def _show_confirm(self, title: str, subtitle: str = "") -> bool:
+        """Show a confirmation dialog. Returns True if confirmed, False if cancelled."""
+        yes_btn, no_btn = self._build_confirm_buttons()
         clock = pygame.time.Clock()
 
         while True:
@@ -692,6 +762,9 @@ class Menu:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return False
+                if self._handle_window_event(event):
+                    yes_btn, no_btn = self._build_confirm_buttons()
+                    continue
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         return False
@@ -709,6 +782,8 @@ class Menu:
             self.surface.blit(overlay, (0, 0))
 
             # Dialog box
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
             dialog_w, dialog_h = 400, 160
             dialog_rect = pygame.Rect(cx - dialog_w // 2, cy - dialog_h // 2, dialog_w, dialog_h)
             pygame.draw.rect(self.surface, (25, 28, 40), dialog_rect, border_radius=8)
@@ -734,17 +809,19 @@ class Menu:
 
     def _show_message(self, *lines: str) -> None:
         """Show a simple message screen until ESC is pressed."""
-        cx = config.WINDOW_WIDTH // 2
         clock = pygame.time.Clock()
 
         while True:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return None
+                if self._handle_window_event(event):
+                    continue
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     return None
 
             self.surface.fill(COLOR_MENU_BG)
+            cx = config.WINDOW_WIDTH // 2
             y = config.WINDOW_HEIGHT // 2 - len(lines) * 15
             for line in lines:
                 text = self.font.render(line, True, COLOR_HUD_TEXT)

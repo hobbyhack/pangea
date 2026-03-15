@@ -52,6 +52,9 @@ class SimSettings:
     food_decay_time: float = config.FOOD_DECAY_TIME
     corpse_decay_time: float = config.CORPSE_DECAY_TIME
     food_cluster_size: int = config.FOOD_CLUSTER_SIZE
+    food_respawn_chance: float = config.FOOD_RESPAWN_CHANCE
+    food_min: int = config.FOOD_MIN
+    food_max: int = config.FOOD_MAX
     season_length: float = config.SEASON_LENGTH
     season_min_rate: float = config.SEASON_MIN_RATE
 
@@ -207,6 +210,12 @@ SETTING_DEFS: list[SettingDef] = [
                tooltip="Seconds before a dead creature's corpse disappears (scavenger food)"),
     SettingDef("food_cluster_size", "Cluster Size", 1, 10, 1, ".0f", "Environment",
                tooltip="Food spawns in clusters of this many items"),
+    SettingDef("food_respawn_chance", "Food Respawn %", 0.0, 1.0, 0.05, ".0%", "Environment",
+               tooltip="Chance a new food spawns at a random location when one is eaten"),
+    SettingDef("food_min", "Food Min", 0, 200, 5, ".0f", "Environment",
+               tooltip="Minimum food items on the map — spawns extra if below this (0 = off)"),
+    SettingDef("food_max", "Food Max", 0, 500, 10, ".0f", "Environment",
+               tooltip="Maximum food items on the map — stops spawning above this (0 = no limit)"),
     SettingDef("food_heal", "Food Heal (sec)", 0.0, 10.0, 0.5, ".1f", "Environment",
                tooltip="Seconds of predator-damage immunity after eating (0 = none)"),
     SettingDef("season_length", "Season Length (s)", 10, 300, 10, ".0f", "Environment",
