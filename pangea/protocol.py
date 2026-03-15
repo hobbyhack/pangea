@@ -54,7 +54,7 @@ def _creature_snapshot(c) -> list:
     return [
         float(c.x), float(c.y), float(c.heading), float(c.speed),
         float(c.energy), c.alive, float(c.dna.effective_radius),
-        c.lineage, c.food_eaten, float(c.age), c.dna.diet,
+        "", c.food_eaten, float(c.age), c.dna.species_id,
         c.death_processed, float(c.under_attack),
     ]
 
@@ -62,7 +62,7 @@ def _creature_snapshot(c) -> list:
 def _food_snapshot(f) -> list:
     """Minimal food state for per-frame sync."""
     return [float(f.x), float(f.y), float(f.energy), float(f.radius),
-            float(f.age), float(f.lifetime), f.is_corpse]
+            float(f.age), float(f.lifetime), f.is_corpse, f.species_id]
 
 
 def _predator_snapshot(p) -> list:
@@ -116,10 +116,10 @@ def apply_snapshot(world: World, data: dict) -> None:
         cr.energy = sc[4]
         cr.alive = sc[5]
         # sc[6] = effective_radius (read-only from DNA, skip)
-        cr.lineage = sc[7]
+        # sc[7] = reserved (unused)
         cr.food_eaten = sc[8]
         cr.age = sc[9]
-        # sc[10] = diet (read-only from DNA, skip)
+        # sc[10] = species_id (read-only from DNA, skip)
         cr.death_processed = sc[11]
         cr.under_attack = sc[12]
 
@@ -128,7 +128,8 @@ def apply_snapshot(world: World, data: dict) -> None:
 
     world.food = [
         Food(x=f[0], y=f[1], energy=f[2], radius=f[3],
-             age=f[4], lifetime=f[5], is_corpse=f[6])
+             age=f[4], lifetime=f[5], is_corpse=f[6],
+             species_id=f[7] if len(f) > 7 else "")
         for f in data["f"]
     ]
 
@@ -160,7 +161,6 @@ def full_state_from_world(
     world: World,
     settings: SimSettings,
     tools: PlayerTools,
-    mode: str,
     generation: int,
     generation_history: list[dict] | None = None,
 ) -> dict:
@@ -181,7 +181,7 @@ def full_state_from_world(
 
     return {
         "t": MsgType.FULL_STATE,
-        "mode": mode,
+        "mode": "freeplay",
         "generation": generation,
         "settings": settings.to_dict(),
         "creatures": [_creature_to_dict(c) for c in world.creatures],
@@ -250,7 +250,8 @@ def apply_full_state(data: dict):
     # Restore food
     world.food = [
         Food(x=f["x"], y=f["y"], energy=f["energy"], radius=f["radius"],
-             age=f["age"], lifetime=f["lifetime"], is_corpse=f.get("is_corpse", False))
+             age=f["age"], lifetime=f["lifetime"], is_corpse=f.get("is_corpse", False),
+             species_id=f.get("species_id", ""))
         for f in data.get("food", [])
     ]
 
@@ -310,7 +311,7 @@ def apply_full_state(data: dict):
         world,
         settings,
         tools,
-        data.get("mode", "isolation"),
+        "freeplay",
         data.get("generation", 1),
         data.get("generation_history", []),
     )

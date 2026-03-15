@@ -15,7 +15,6 @@ import pygame
 
 import pangea.config as config
 from pangea.settings import (
-    DIET_SETTING_DEFS,
     EXTINCTION_MODES,
     SETTING_DEFS,
     SimSettings,
@@ -73,12 +72,15 @@ class SettingsPanel:
 
     # ── Layout ────────────────────────────────────────────────
 
-    def _rebuild_layout(self) -> None:
-        """Build slider metadata with relative y positions."""
+    def _rebuild_layout(self, settings: SimSettings | None = None) -> None:
+        """Build slider metadata with relative y positions.
+
+        Per-species settings are managed in the Species Editor, not here.
+        """
         self._sliders = []
         y = 0
         last_cat = ""
-        for sdef in list(SETTING_DEFS) + DIET_SETTING_DEFS:
+        for sdef in SETTING_DEFS:
             if sdef.category != last_cat:
                 last_cat = sdef.category
                 y += 8  # category gap
@@ -90,31 +92,34 @@ class SettingsPanel:
             y += ROW_HEIGHT
         self._content_height = y
 
-    # ── Per-diet value helpers ─────────────────────────────────
+    # ── Per-species value helpers ────────────────────────────────
 
     @staticmethod
     def _get_val(settings: SimSettings, sdef) -> float:
-        """Get a setting value, routing to DietSettings when sdef.diet is set."""
-        if sdef.diet is not None:
-            ds = settings.diet_settings(sdef.diet)
-            return getattr(ds, sdef.key)
+        """Get a setting value, routing to SpeciesSettings when sdef.species_id is set."""
+        if sdef.species_id is not None:
+            sp = settings.species_registry.get(sdef.species_id)
+            if sp is not None:
+                return getattr(sp.settings, sdef.key)
         return getattr(settings, sdef.key)
 
     @staticmethod
     def _set_val(settings: SimSettings, sdef, value) -> None:
-        """Set a setting value, routing to DietSettings when sdef.diet is set."""
-        if sdef.diet is not None:
-            ds = settings.diet_settings(sdef.diet)
-            setattr(ds, sdef.key, value)
+        """Set a setting value, routing to SpeciesSettings when sdef.species_id is set."""
+        if sdef.species_id is not None:
+            sp = settings.species_registry.get(sdef.species_id)
+            if sp is not None:
+                setattr(sp.settings, sdef.key, value)
         else:
             setattr(settings, sdef.key, value)
 
     # ── Public API ────────────────────────────────────────────
 
-    def toggle(self) -> None:
+    def toggle(self, settings: SimSettings | None = None) -> None:
         self.visible = not self.visible
         if self.visible:
             self._file_picker_mode = None
+            self._rebuild_layout(settings)
 
     def panel_rect(self) -> pygame.Rect:
         """Return the screen rect occupied by the panel."""

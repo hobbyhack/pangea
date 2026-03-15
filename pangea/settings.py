@@ -14,79 +14,18 @@ from dataclasses import dataclass, fields, field
 from pathlib import Path
 
 from pangea import config
+from pangea.species import (
+    Species,
+    SpeciesRegistry,
+    SpeciesSettings,
+    default_registry,
+    species_id_from_legacy_diet,
+    EXTINCTION_RESPAWN_BEST,
+    EXTINCTION_RESPAWN_RANDOM,
+    EXTINCTION_PERMANENT,
+    EXTINCTION_MODES,
+)
 
-
-# ── Extinction mode constants ──────────────────────────────
-EXTINCTION_RESPAWN_BEST = "respawn_best"
-EXTINCTION_RESPAWN_RANDOM = "respawn_random"
-EXTINCTION_PERMANENT = "permanent"
-EXTINCTION_MODES = [EXTINCTION_RESPAWN_BEST, EXTINCTION_RESPAWN_RANDOM, EXTINCTION_PERMANENT]
-
-
-@dataclass
-class DietSettings:
-    """Per-species settings for freeplay mode (population, breeding, mutation, extinction)."""
-
-    # ── Population ────────────────────────────────────────────
-    freeplay_initial_population: int = 13
-    freeplay_carrying_capacity: int = 27
-    freeplay_hard_cap: int = 40
-
-    # ── Mutation / Evolution ──────────────────────────────────
-    mutation_rate: float = config.MUTATION_RATE
-    mutation_strength: float = config.MUTATION_STRENGTH
-    crossover_rate: float = 0.0
-    trait_mutation_range: int = config.TRAIT_MUTATION_RANGE
-    weight_clamp: float = 0.0
-    top_performers_count: int = config.TOP_PERFORMERS_COUNT
-    min_population: int = 0
-    diet_mutation_rate: float = 0.0
-
-    # ── Breeding ──────────────────────────────────────────────
-    freeplay_breed_min_age: float = config.FREEPLAY_BREED_MIN_AGE
-    freeplay_breed_min_food: int = config.FREEPLAY_BREED_MIN_FOOD
-    freeplay_breed_energy_threshold: float = config.FREEPLAY_BREED_ENERGY_THRESHOLD
-    freeplay_breed_cooldown: float = config.FREEPLAY_BREED_COOLDOWN
-    freeplay_breed_energy_cost: float = config.FREEPLAY_BREED_ENERGY_COST
-    freeplay_child_energy: float = config.FREEPLAY_CHILD_ENERGY
-
-    # ── Extinction ────────────────────────────────────────────
-    extinction_mode: str = EXTINCTION_RESPAWN_BEST
-
-    def to_dict(self) -> dict:
-        return {f.name: getattr(self, f.name) for f in fields(self)}
-
-    @classmethod
-    def from_dict(cls, data: dict) -> DietSettings:
-        valid = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in data.items() if k in valid})
-
-    def copy(self) -> DietSettings:
-        return DietSettings.from_dict(self.to_dict())
-
-
-def _default_herbivore() -> DietSettings:
-    return DietSettings(
-        freeplay_initial_population=24,
-        freeplay_carrying_capacity=48,
-        freeplay_hard_cap=72,
-    )
-
-
-def _default_carnivore() -> DietSettings:
-    return DietSettings(
-        freeplay_initial_population=8,
-        freeplay_carrying_capacity=16,
-        freeplay_hard_cap=24,
-    )
-
-
-def _default_scavenger() -> DietSettings:
-    return DietSettings(
-        freeplay_initial_population=8,
-        freeplay_carrying_capacity=16,
-        freeplay_hard_cap=24,
-    )
 
 
 @dataclass
@@ -95,7 +34,7 @@ class SimSettings:
     All tunable simulation parameters, adjustable at runtime.
 
     Initialized from config.py defaults. Modify these through the
-    in-app settings panel to steer evolution during Isolation Mode.
+    in-app settings panel.
     """
 
     # ── Population & Generations ─────────────────────────────
@@ -162,9 +101,6 @@ class SimSettings:
     territory_fitness_weight: float = 0.0
     fitness_offspring_weight: float = config.FITNESS_OFFSPRING_WEIGHT
 
-    # ── Convergence ──────────────────────────────────────────
-    convergence_max_generations: int = config.CONVERGENCE_MAX_GENERATIONS
-
     # ── Freeplay Mode ──────────────────────────────────────────
     freeplay_initial_population: int = config.FREEPLAY_INITIAL_POPULATION
     freeplay_carrying_capacity: int = config.FREEPLAY_CARRYING_CAPACITY
@@ -178,54 +114,52 @@ class SimSettings:
     freeplay_child_spawn_radius: float = config.FREEPLAY_CHILD_SPAWN_RADIUS
     freeplay_overcapacity_food_penalty: float = config.FREEPLAY_OVERCAPACITY_FOOD_PENALTY
 
-    # ── Per-Diet Species Settings (Freeplay) ──────────────────
-    herbivore: DietSettings = field(default_factory=_default_herbivore)
-    carnivore: DietSettings = field(default_factory=_default_carnivore)
-    scavenger: DietSettings = field(default_factory=_default_scavenger)
-
-    def diet_settings(self, diet: int) -> DietSettings:
-        """Return the DietSettings for a given diet constant."""
-        if diet == config.DIET_CARNIVORE:
-            return self.carnivore
-        elif diet == config.DIET_SCAVENGER:
-            return self.scavenger
-        return self.herbivore
+    # ── Species Registry (replaces fixed herbivore/carnivore/scavenger) ──
+    species_registry: SpeciesRegistry = field(default_factory=default_registry)
 
     def total_freeplay_carrying_capacity(self) -> int:
-        """Sum of all per-diet carrying capacities (for food overcapacity calc)."""
-        return (
-            self.herbivore.freeplay_carrying_capacity
-            + self.carnivore.freeplay_carrying_capacity
-            + self.scavenger.freeplay_carrying_capacity
-        )
+        """Sum of all per-species carrying capacities (for food overcapacity calc)."""
+        return sum(sp.settings.freeplay_carrying_capacity for sp in self.species_registry)
 
     def to_dict(self) -> dict:
         """Serialize all settings to a plain dict."""
         d = {}
         for f in fields(self):
-            if f.name in ("herbivore", "carnivore", "scavenger"):
+            if f.name == "species_registry":
                 continue
             d[f.name] = getattr(self, f.name)
-        d["diet_herbivore"] = self.herbivore.to_dict()
-        d["diet_carnivore"] = self.carnivore.to_dict()
-        d["diet_scavenger"] = self.scavenger.to_dict()
+        d["species"] = self.species_registry.to_list()
         return d
 
     @classmethod
     def from_dict(cls, data: dict) -> SimSettings:
         """Create SimSettings from a dict, ignoring unknown keys.
 
-        Backward compatible: old saves without diet_* keys get defaults.
+        Backward compatible: old saves with diet_herbivore/diet_carnivore/
+        diet_scavenger keys are migrated to species_registry.
         """
-        valid = {f.name for f in fields(cls)} - {"herbivore", "carnivore", "scavenger"}
+        valid = {f.name for f in fields(cls)} - {"species_registry"}
         kwargs = {k: v for k, v in data.items() if k in valid}
 
-        if "diet_herbivore" in data:
-            kwargs["herbivore"] = DietSettings.from_dict(data["diet_herbivore"])
-        if "diet_carnivore" in data:
-            kwargs["carnivore"] = DietSettings.from_dict(data["diet_carnivore"])
-        if "diet_scavenger" in data:
-            kwargs["scavenger"] = DietSettings.from_dict(data["diet_scavenger"])
+        if "species" in data:
+            # New format: species list
+            kwargs["species_registry"] = SpeciesRegistry.from_list(data["species"])
+        elif "diet_herbivore" in data or "diet_carnivore" in data or "diet_scavenger" in data:
+            # Legacy format: migrate from fixed diet settings
+            registry = default_registry()
+            if "diet_herbivore" in data:
+                sp = registry.get("herbivore")
+                if sp:
+                    sp.settings = SpeciesSettings.from_dict(data["diet_herbivore"])
+            if "diet_carnivore" in data:
+                sp = registry.get("carnivore")
+                if sp:
+                    sp.settings = SpeciesSettings.from_dict(data["diet_carnivore"])
+            if "diet_scavenger" in data:
+                sp = registry.get("scavenger")
+                if sp:
+                    sp.settings = SpeciesSettings.from_dict(data["diet_scavenger"])
+            kwargs["species_registry"] = registry
 
         return cls(**kwargs)
 
@@ -261,7 +195,7 @@ class SimSettings:
 class SettingDef:
     """Describes one setting for the settings panel UI."""
 
-    key: str          # attribute name on SimSettings (or DietSettings attr for per-diet)
+    key: str          # attribute name on SimSettings (or SpeciesSettings attr for per-species)
     label: str        # display name
     min_val: float    # minimum allowed value
     max_val: float    # maximum allowed value
@@ -270,35 +204,11 @@ class SettingDef:
     category: str = ""
     widget_type: str = "slider"  # "slider", "toggle", or "select"
     tooltip: str = "" # hover description
-    diet: int | None = None  # None=global, 0=herbivore, 1=carnivore, 2=scavenger
+    species_id: str | None = None  # None=global, string=per-species
 
 
 # Settings organized by category for the UI panel
 SETTING_DEFS: list[SettingDef] = [
-    # ── Population ───────────────────────────────────────────
-    SettingDef("population_size", "Population Size", 10, 200, 10, ".0f", "Population",
-               tooltip="Number of creatures spawned each generation"),
-    SettingDef("generation_time_limit", "Gen Time (sec)", 10, 120, 5, ".0f", "Population",
-               tooltip="Max seconds a generation runs before selection occurs"),
-    SettingDef("top_performers_count", "Top Survivors", 2, 50, 1, ".0f", "Population",
-               tooltip="How many top-fitness creatures survive to breed the next generation"),
-    SettingDef("min_population", "Min Parents", 0, 50, 1, ".0f", "Population",
-               tooltip="Minimum parent count; pads survivors with random DNA if too few qualify (0 = off)"),
-    SettingDef("extinction_threshold", "Extinction Threshold", 0, 50, 1, ".0f", "Population",
-               tooltip="If fewer than this many survive, the run ends as an extinction event (0 = off)"),
-    SettingDef("max_generations", "Max Generations", 0, 500, 10, ".0f", "Population",
-               tooltip="Stop the simulation after this many generations (0 = unlimited)"),
-    # ── Mutation ─────────────────────────────────────────────
-    SettingDef("mutation_rate", "Mutation Rate", 0.01, 1.0, 0.05, ".2f", "Mutation",
-               tooltip="Probability each neural-network weight is mutated per offspring"),
-    SettingDef("mutation_strength", "Mutation Strength", 0.05, 2.0, 0.05, ".2f", "Mutation",
-               tooltip="Standard deviation of Gaussian noise added to mutated weights"),
-    SettingDef("crossover_rate", "Crossover Rate", 0.0, 1.0, 0.05, ".2f", "Mutation",
-               tooltip="Chance two parents swap gene segments when breeding (0 = cloning only)"),
-    SettingDef("trait_mutation_range", "Trait Mut. Range", 0, 20, 1, ".0f", "Mutation",
-               tooltip="Max points a trait (speed/size/vision/efficiency) can shift per generation"),
-    SettingDef("weight_clamp", "Weight Clamp", 0.0, 10.0, 0.5, ".1f", "Mutation",
-               tooltip="Clamp NN weights to [-value, +value] after mutation (0 = no clamping)"),
     # ── World ────────────────────────────────────────────────
     SettingDef("world_wrap", "World Wrap", 0, 1, 1, ".0f", "World", widget_type="toggle",
                tooltip="Creatures exiting one edge reappear on the opposite side"),
@@ -325,28 +235,18 @@ SETTING_DEFS: list[SettingDef] = [
                tooltip="Maximum food items on the map — stops spawning above this (0 = no limit)"),
     SettingDef("corpse_decay_time", "Corpse Decay (sec)", 3, 60, 1, ".0f", "Food",
                tooltip="Seconds before a dead creature's corpse disappears (scavenger food)"),
-    SettingDef("season_enabled", "Seasons", 0, 1, 1, ".0f", "Food", widget_type="toggle",
+    # ── Seasons ─────────────────────────────────────────────
+    SettingDef("season_enabled", "Seasons", 0, 1, 1, ".0f", "Seasons", widget_type="toggle",
                tooltip="Enable seasonal food spawn oscillation"),
-    SettingDef("season_length", "Season Length (s)", 10, 300, 10, ".0f", "Food",
+    SettingDef("season_length", "Season Length (s)", 10, 300, 10, ".0f", "Seasons",
                tooltip="Duration of one full season cycle (food rate oscillates over this period)"),
-    SettingDef("season_min_rate", "Season Min Rate", 0.0, 1.0, 0.05, ".2f", "Food",
+    SettingDef("season_min_rate", "Season Min Rate", 0.0, 1.0, 0.05, ".2f", "Seasons",
                tooltip="Food spawn rate multiplier at the trough of the season cycle"),
-    # ── Creatures ────────────────────────────────────────────
-    SettingDef("base_energy", "Start Energy", 20, 500, 10, ".0f", "Creatures",
-               tooltip="Energy each creature starts with; reaching 0 means death"),
-    SettingDef("energy_cost_per_thrust", "Move Cost", 0.01, 0.5, 0.01, ".2f", "Creatures",
-               tooltip="Energy drained per unit of forward thrust (scaled by creature size)"),
-    SettingDef("turn_cost", "Turn Cost", 0.0, 0.5, 0.01, ".2f", "Creatures",
-               tooltip="Extra energy cost for turning (0 = turning is free)"),
-    SettingDef("food_heal", "Food Heal (sec)", 0.0, 10.0, 0.5, ".1f", "Creatures",
-               tooltip="Seconds of predator-damage immunity after eating (0 = none)"),
     # ── Day/Night ────────────────────────────────────────────
     SettingDef("day_night_enabled", "Day/Night Cycle", 0, 1, 1, ".0f", "Day/Night", widget_type="toggle",
                tooltip="Enable the day/night cycle (darkness overlay and vision reduction)"),
     SettingDef("day_night_cycle_length", "Day/Night Cycle (s)", 10, 300, 10, ".0f", "Day/Night",
                tooltip="Length of a full day/night cycle in seconds"),
-    SettingDef("night_vision_multiplier", "Night Vision", 0.0, 1.0, 0.05, ".2f", "Day/Night",
-               tooltip="Vision range multiplier during nighttime (1.0 = no reduction)"),
     # ── Threats ──────────────────────────────────────────────
     SettingDef("hazard_count", "Hazard Zones", 0, 10, 1, ".0f", "Threats",
                tooltip="Number of damaging hazard zones placed on the map"),
@@ -364,89 +264,80 @@ SETTING_DEFS: list[SettingDef] = [
                tooltip="Seconds a predator can chase before resting (0 = infinite stamina)"),
     SettingDef("predator_respawn_interval", "Predator Respawn", 0.0, 60.0, 5.0, ".0f", "Threats",
                tooltip="Seconds before a killed predator respawns (0 = predators are immortal)"),
-    # ── Fitness ──────────────────────────────────────────────
-    SettingDef("fitness_food_weight", "Food Weight", 0.0, 50.0, 1.0, ".1f", "Fitness",
-               tooltip="How much food eaten contributes to a creature's fitness score"),
-    SettingDef("fitness_time_weight", "Survival Weight", 0.0, 5.0, 0.05, ".2f", "Fitness",
-               tooltip="How much time alive contributes to fitness (rewards longevity)"),
-    SettingDef("fitness_energy_weight", "Energy Weight", 0.0, 5.0, 0.05, ".2f", "Fitness",
-               tooltip="How much remaining energy at death contributes to fitness"),
-    SettingDef("territory_fitness_weight", "Territory Weight", 0.0, 5.0, 0.1, ".1f", "Fitness",
-               tooltip="How much area explored contributes to fitness (rewards exploration)"),
-    SettingDef("fitness_offspring_weight", "Offspring Weight", 0.0, 20.0, 0.5, ".1f", "Fitness",
-               tooltip="How much breeding success contributes to fitness (rewards creatures that reproduced)"),
-    # ── Freeplay ─────────────────────────────────────────────
-    SettingDef("freeplay_initial_population", "Initial Population", 10, 100, 5, ".0f", "Freeplay",
-               tooltip="Number of random creatures at the start of freeplay"),
-    SettingDef("freeplay_carrying_capacity", "Carrying Capacity", 20, 200, 10, ".0f", "Freeplay",
-               tooltip="Soft population cap — food spawns slower above this"),
-    SettingDef("freeplay_hard_cap", "Hard Cap", 30, 300, 10, ".0f", "Freeplay",
-               tooltip="Absolute max population — no births above this"),
-    SettingDef("freeplay_breed_min_age", "Breed Min Age (s)", 1, 30, 1, ".0f", "Freeplay",
-               tooltip="Minimum seconds alive before a creature can breed"),
-    SettingDef("freeplay_breed_min_food", "Breed Min Food", 1, 20, 1, ".0f", "Freeplay",
-               tooltip="Minimum food items eaten before breeding is allowed"),
-    SettingDef("freeplay_breed_energy_threshold", "Breed Energy %", 0.1, 1.0, 0.05, ".2f", "Freeplay",
-               tooltip="Energy must be above this fraction of base energy to breed"),
-    SettingDef("freeplay_breed_cooldown", "Breed Cooldown (s)", 1, 60, 1, ".0f", "Freeplay",
-               tooltip="Seconds between successive breeding attempts"),
-    SettingDef("freeplay_breed_energy_cost", "Breed Energy Cost", 5, 100, 5, ".0f", "Freeplay",
-               tooltip="Energy deducted from parent when offspring is produced"),
-    SettingDef("freeplay_child_energy", "Child Start Energy", 10, 200, 10, ".0f", "Freeplay",
-               tooltip="Starting energy for newborn creatures"),
 ]
 
 
-def _diet_setting_defs(diet: int, category: str) -> list[SettingDef]:
-    """Generate per-diet SettingDef entries for a given diet type."""
+def _species_setting_defs(species_id: str, category: str) -> list[SettingDef]:
+    """Generate per-species SettingDef entries."""
     return [
         # Population
         SettingDef("freeplay_initial_population", "Initial Population", 1, 100, 1, ".0f",
-                   category, tooltip="Starting population for this species", diet=diet),
+                   category, tooltip="Starting population for this species", species_id=species_id),
         SettingDef("freeplay_carrying_capacity", "Carrying Capacity", 5, 200, 5, ".0f",
-                   category, tooltip="Soft cap — food spawns slower above this", diet=diet),
+                   category, tooltip="Soft cap — food spawns slower above this", species_id=species_id),
         SettingDef("freeplay_hard_cap", "Hard Cap", 10, 300, 5, ".0f",
-                   category, tooltip="Absolute max — no births above this", diet=diet),
+                   category, tooltip="Absolute max — no births above this", species_id=species_id),
         # Mutation
         SettingDef("mutation_rate", "Mutation Rate", 0.01, 1.0, 0.05, ".2f",
-                   category, tooltip="NN weight mutation probability per offspring", diet=diet),
+                   category, tooltip="NN weight mutation probability per offspring", species_id=species_id),
         SettingDef("mutation_strength", "Mutation Strength", 0.05, 2.0, 0.05, ".2f",
-                   category, tooltip="Gaussian noise std dev for weight mutation", diet=diet),
+                   category, tooltip="Gaussian noise std dev for weight mutation", species_id=species_id),
         SettingDef("crossover_rate", "Crossover Rate", 0.0, 1.0, 0.05, ".2f",
-                   category, tooltip="Chance two parents swap genes (0 = cloning)", diet=diet),
+                   category, tooltip="Chance two parents swap genes (0 = cloning)", species_id=species_id),
         SettingDef("trait_mutation_range", "Trait Mut. Range", 0, 20, 1, ".0f",
-                   category, tooltip="Max trait point shift per generation", diet=diet),
+                   category, tooltip="Max trait point shift per generation", species_id=species_id),
         SettingDef("weight_clamp", "Weight Clamp", 0.0, 10.0, 0.5, ".1f",
-                   category, tooltip="Clamp NN weights after mutation (0 = off)", diet=diet),
+                   category, tooltip="Clamp NN weights after mutation (0 = off)", species_id=species_id),
         SettingDef("top_performers_count", "Top Survivors", 1, 50, 1, ".0f",
-                   category, tooltip="Top-fitness creatures used for extinction respawn", diet=diet),
+                   category, tooltip="Top-fitness creatures used for extinction respawn", species_id=species_id),
         SettingDef("min_population", "Min Parents", 0, 50, 1, ".0f",
-                   category, tooltip="Pad parents with random DNA if too few (0 = off)", diet=diet),
-        SettingDef("diet_mutation_rate", "Diet Mutation %", 0.0, 0.5, 0.01, ".2f",
-                   category, tooltip="Chance offspring switches to a random diet (0 = off)", diet=diet),
+                   category, tooltip="Pad parents with random DNA if too few (0 = off)", species_id=species_id),
         # Breeding
         SettingDef("freeplay_breed_min_age", "Breed Min Age (s)", 1, 30, 1, ".0f",
-                   category, tooltip="Min seconds alive before breeding", diet=diet),
+                   category, tooltip="Min seconds alive before breeding", species_id=species_id),
         SettingDef("freeplay_breed_min_food", "Breed Min Food", 1, 20, 1, ".0f",
-                   category, tooltip="Min food eaten before breeding", diet=diet),
+                   category, tooltip="Min food eaten before breeding", species_id=species_id),
         SettingDef("freeplay_breed_energy_threshold", "Breed Energy %", 0.1, 1.0, 0.05, ".2f",
-                   category, tooltip="Energy fraction required to breed", diet=diet),
+                   category, tooltip="Energy fraction required to breed", species_id=species_id),
         SettingDef("freeplay_breed_cooldown", "Breed Cooldown (s)", 1, 60, 1, ".0f",
-                   category, tooltip="Seconds between breedings", diet=diet),
+                   category, tooltip="Seconds between breedings", species_id=species_id),
         SettingDef("freeplay_breed_energy_cost", "Breed Energy Cost", 5, 100, 5, ".0f",
-                   category, tooltip="Energy deducted from parent", diet=diet),
+                   category, tooltip="Energy deducted from parent", species_id=species_id),
         SettingDef("freeplay_child_energy", "Child Start Energy", 10, 200, 10, ".0f",
-                   category, tooltip="Starting energy for offspring", diet=diet),
+                   category, tooltip="Starting energy for offspring", species_id=species_id),
+        # Creatures
+        SettingDef("base_energy", "Start Energy", 20, 500, 10, ".0f",
+                   category, tooltip="Energy each creature starts with", species_id=species_id),
+        SettingDef("energy_cost_per_thrust", "Move Cost", 0.01, 0.5, 0.01, ".2f",
+                   category, tooltip="Energy drained per unit of thrust", species_id=species_id),
+        SettingDef("turn_cost", "Turn Cost", 0.0, 0.5, 0.01, ".2f",
+                   category, tooltip="Extra energy cost for turning (0 = free)", species_id=species_id),
+        SettingDef("food_heal", "Food Heal (sec)", 0.0, 10.0, 0.5, ".1f",
+                   category, tooltip="Lifespan seconds restored per food eaten", species_id=species_id),
+        # Night Vision
+        SettingDef("night_vision_multiplier", "Night Vision", 0.0, 1.0, 0.05, ".2f",
+                   category, tooltip="Vision multiplier at night (1.0 = no reduction)", species_id=species_id),
+        # Fitness
+        SettingDef("fitness_food_weight", "Food Weight", 0.0, 50.0, 1.0, ".1f",
+                   category, tooltip="Food eaten contribution to fitness", species_id=species_id),
+        SettingDef("fitness_time_weight", "Survival Weight", 0.0, 5.0, 0.05, ".2f",
+                   category, tooltip="Time alive contribution to fitness", species_id=species_id),
+        SettingDef("fitness_energy_weight", "Energy Weight", 0.0, 5.0, 0.05, ".2f",
+                   category, tooltip="Remaining energy contribution to fitness", species_id=species_id),
+        SettingDef("territory_fitness_weight", "Territory Weight", 0.0, 5.0, 0.1, ".1f",
+                   category, tooltip="Area explored contribution to fitness", species_id=species_id),
+        SettingDef("fitness_offspring_weight", "Offspring Weight", 0.0, 20.0, 0.5, ".1f",
+                   category, tooltip="Breeding success contribution to fitness", species_id=species_id),
         # Extinction
         SettingDef("extinction_mode", "Extinction Mode", 0, 2, 1, ".0f",
                    category, widget_type="select",
-                   tooltip="0=Respawn Best, 1=Respawn Random, 2=Permanent", diet=diet),
+                   tooltip="0=Respawn Best, 1=Respawn Random, 2=Permanent", species_id=species_id),
     ]
 
 
-# Per-diet setting definitions for the UI
-DIET_SETTING_DEFS: list[SettingDef] = (
-    _diet_setting_defs(config.DIET_HERBIVORE, "Herbivore")
-    + _diet_setting_defs(config.DIET_CARNIVORE, "Carnivore")
-    + _diet_setting_defs(config.DIET_SCAVENGER, "Scavenger")
-)
+def build_species_setting_defs(registry: SpeciesRegistry) -> list[SettingDef]:
+    """Build per-species setting definitions dynamically from the registry."""
+    result: list[SettingDef] = []
+    for sp in registry.all():
+        result.extend(_species_setting_defs(sp.id, sp.name))
+    return result

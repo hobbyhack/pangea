@@ -84,9 +84,6 @@ FITNESS_TIME_WEIGHT = 0.1    # Points per second survived
 FITNESS_ENERGY_WEIGHT = 0.05 # Points per unit of remaining energy
 FITNESS_OFFSPRING_WEIGHT = 5.0  # Points per offspring produced
 
-# ── Convergence Mode ─────────────────────────────────────────
-CONVERGENCE_MAX_GENERATIONS = 50  # Max generations before declaring a winner
-CREATURES_PER_LINEAGE = 25        # Creatures per lineage in convergence mode
 
 # ── Day/Night Cycle ────────────────────────────────────────
 DAY_NIGHT_CYCLE_LENGTH = 90.0     # Seconds for one full day/night cycle
@@ -130,8 +127,6 @@ TERRITORY_GRID_SIZE = 80           # Pixels per territory grid cell
 # ── Colors (RGB) ─────────────────────────────────────────────
 COLOR_BACKGROUND = (15, 15, 25)
 COLOR_FOOD = (50, 205, 50)
-COLOR_LINEAGE_A = (220, 60, 60)    # Red team
-COLOR_LINEAGE_B = (60, 120, 220)   # Blue team
 COLOR_HUD_TEXT = (220, 220, 220)
 COLOR_MENU_BG = (20, 20, 35)
 COLOR_BUTTON = (50, 60, 90)
@@ -155,7 +150,7 @@ COLOR_BIOME_DESERT = (140, 120, 50) # Desert biome tint color
 COLOR_BIOME_SWAMP = (50, 70, 40)    # Swamp biome tint color
 COLOR_BIOME_MOUNTAIN = (100, 100, 110)  # Mountain biome tint color
 
-# ── Creature Diets ─────────────────────────────────────────
+# ── Creature Diets (legacy — kept for backward-compatible save loading) ──
 DIET_HERBIVORE = 0               # Eats plants, bonus food energy
 DIET_CARNIVORE = 1               # Attacks creatures, reduced plant food
 DIET_SCAVENGER = 2               # Normal food + energy from nearby deaths

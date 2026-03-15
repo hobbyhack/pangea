@@ -175,14 +175,14 @@ class TestFullState:
         gen_history = [{"gen": 1, "avg_speed": 20.0}]
 
         full = full_state_from_world(
-            world, settings, tools, "isolation", 3, gen_history,
+            world, settings, tools, 3, gen_history,
         )
         assert full["t"] == MsgType.FULL_STATE
 
         result = apply_full_state(full)
         world2, settings2, tools2, mode, gen, history = result
 
-        assert mode == "isolation"
+        assert mode == "freeplay"
         assert gen == 3
         assert len(world2.creatures) == 5
         assert len(world2.food) == 8
@@ -195,12 +195,12 @@ class TestFullState:
 
     def test_full_state_msgpack_round_trip(self):
         world, settings, tools = _make_world(n_creatures=3, n_food=4)
-        full = full_state_from_world(world, settings, tools, "freeplay", 1)
+        full = full_state_from_world(world, settings, tools, 1)
         data = pack(full)
         restored = unpack(data)
         result = apply_full_state(restored)
         world2, _, _, mode, _, _ = result
-        assert mode == "freeplay"
+        assert mode == "freeplay"  # always freeplay now
         assert len(world2.creatures) == 3
 
 

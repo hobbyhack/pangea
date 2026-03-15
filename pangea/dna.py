@@ -20,7 +20,6 @@ import numpy as np
 
 from pangea.config import (
     DEFAULT_LIFESPAN,
-    DIET_HERBIVORE,
     EFFICIENCY_BASE,
     EFFICIENCY_SCALE,
     EVOLUTION_POINTS,
@@ -58,7 +57,7 @@ class DNA:
     vision: int
     efficiency: int
     lifespan: int
-    diet: int = DIET_HERBIVORE  # 0=herbivore, 1=carnivore, 2=scavenger
+    species_id: str = "herbivore"  # species registry key
 
     # ── Trait Scaling ────────────────────────────────────────
 
@@ -117,12 +116,16 @@ class DNA:
             "vision": int(self.vision),
             "efficiency": int(self.efficiency),
             "lifespan": int(self.lifespan),
-            "diet": int(self.diet),
+            "species_id": self.species_id,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> DNA:
-        """Reconstruct DNA from a dictionary (loaded from JSON)."""
+        """Reconstruct DNA from a dictionary (loaded from JSON).
+
+        Supports legacy saves: if 'species_id' is missing, maps the old
+        'diet' integer (0/1/2) to the corresponding species ID.
+        """
         from pangea.config import NN_INPUT_SIZE, NN_HIDDEN_SIZE
 
         W1 = np.array(data["weights"]["W1"])
@@ -136,6 +139,13 @@ class DNA:
             pad = np.random.randn(NN_INPUT_SIZE - old_inputs, NN_HIDDEN_SIZE) * 0.5
             W1 = np.vstack([W1, pad])
 
+        # Legacy migration: diet int -> species_id string
+        if "species_id" in data:
+            species_id = data["species_id"]
+        else:
+            from pangea.species import species_id_from_legacy_diet
+            species_id = species_id_from_legacy_diet(data.get("diet", 0))
+
         weights = [W1, b1, W2, b2]
         return cls(
             weights=weights,
@@ -144,12 +154,16 @@ class DNA:
             vision=data["vision"],
             efficiency=data["efficiency"],
             lifespan=data.get("lifespan", DEFAULT_LIFESPAN),
-            diet=data.get("diet", DIET_HERBIVORE),
+            species_id=species_id,
         )
 
     @classmethod
-    def random(cls) -> DNA:
-        """Create a DNA with random weights and randomized trait allocation."""
+    def random(cls, species_id: str = "herbivore") -> DNA:
+        """Create a DNA with random weights and randomized trait allocation.
+
+        Args:
+            species_id: The species this creature belongs to.
+        """
         # Random trait allocation that sums to EVOLUTION_POINTS
         # Generate 4 random cut points, then compute segment lengths for 5 traits
         cuts = sorted(np.random.randint(1, EVOLUTION_POINTS, size=4))
@@ -174,10 +188,6 @@ class DNA:
             np.zeros(NN_OUTPUT_SIZE),
         ]
 
-        import random as _rng
-        diet = _rng.choice([DIET_HERBIVORE, DIET_HERBIVORE, DIET_HERBIVORE,
-                            1, 2])  # 60% herbivore, 20% carnivore, 20% scavenger
-
         return cls(
             weights=weights,
             speed=traits[0],
@@ -185,12 +195,10 @@ class DNA:
             vision=traits[2],
             efficiency=traits[3],
             lifespan=traits[4],
-            diet=diet,
+            species_id=species_id,
         )
 
     @classmethod
-    def random_for_diet(cls, diet: int) -> DNA:
-        """Create random DNA with a specific diet type."""
-        dna = cls.random()
-        dna.diet = diet
-        return dna
+    def random_for_species(cls, species_id: str) -> DNA:
+        """Create random DNA for a specific species."""
+        return cls.random(species_id=species_id)

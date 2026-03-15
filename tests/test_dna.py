@@ -58,7 +58,7 @@ class TestDNA:
     def test_to_dict_from_dict_round_trip(self):
         """Serialization round trip should preserve all data."""
         original = self._make_dna(25, 20, 20, 20, 15)
-        original.diet = 1  # carnivore
+        original.species_id = "carnivore"
         data = original.to_dict()
         restored = DNA.from_dict(data)
 
@@ -67,7 +67,7 @@ class TestDNA:
         assert restored.vision == original.vision
         assert restored.efficiency == original.efficiency
         assert restored.lifespan == original.lifespan
-        assert restored.diet == original.diet
+        assert restored.species_id == original.species_id
 
         for orig_w, rest_w in zip(original.weights, restored.weights):
             np.testing.assert_array_almost_equal(orig_w, rest_w)
@@ -109,25 +109,35 @@ class TestDNA:
         restored = DNA.from_dict(d)
         assert restored.lifespan == DEFAULT_LIFESPAN
 
-    def test_from_dict_diet_fallback(self):
-        """from_dict should default to herbivore when diet key is missing."""
-        from pangea.config import DIET_HERBIVORE
+    def test_from_dict_species_id_fallback(self):
+        """from_dict should default to herbivore when species_id key is missing."""
         dna = self._make_dna()
         d = dna.to_dict()
-        del d["diet"]
+        del d["species_id"]
         restored = DNA.from_dict(d)
-        assert restored.diet == DIET_HERBIVORE
+        assert restored.species_id == "herbivore"
 
-    def test_random_has_valid_diet(self):
-        """Random DNA should have a valid diet (0, 1, or 2)."""
+    def test_from_dict_legacy_diet_migration(self):
+        """from_dict should migrate legacy diet int to species_id."""
+        dna = self._make_dna()
+        d = dna.to_dict()
+        # Simulate legacy save: remove species_id, add diet int
+        del d["species_id"]
+        d["diet"] = 1  # carnivore
+        restored = DNA.from_dict(d)
+        assert restored.species_id == "carnivore"
+
+    def test_random_has_valid_species_id(self):
+        """Random DNA should have a valid species_id."""
         for _ in range(50):
             dna = DNA.random()
-            assert dna.diet in (0, 1, 2)
+            assert isinstance(dna.species_id, str)
+            assert len(dna.species_id) > 0
 
-    def test_to_dict_includes_diet(self):
-        """to_dict should include the diet field."""
+    def test_to_dict_includes_species_id(self):
+        """to_dict should include the species_id field."""
         dna = self._make_dna()
-        dna.diet = 2  # scavenger
+        dna.species_id = "scavenger"
         d = dna.to_dict()
-        assert "diet" in d
-        assert d["diet"] == 2
+        assert "species_id" in d
+        assert d["species_id"] == "scavenger"

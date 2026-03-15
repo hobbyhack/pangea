@@ -1,11 +1,9 @@
 """
 Save/Load — JSON serialization for species DNA and full game saves.
 ============================================================
-Export your top creatures to a .json file so another user can
-load them into Convergence Mode on their machine.
+Export your top creatures to a .json file.
 
-Also provides full game save/load so players can quit and resume
-any game mode (Isolation, Convergence, Freeplay) later.
+Also provides full game save/load so players can quit and resume later.
 """
 
 from __future__ import annotations
@@ -90,23 +88,19 @@ SAVES_DIR = "saves"
 
 
 def save_game(
-    mode: str,
     dna_list: list[DNA],
     generation: int,
     settings_dict: dict,
     save_name: str = "",
-    extra: dict | None = None,
 ) -> str:
     """
     Save a full game state to a JSON file in the saves/ directory.
 
     Args:
-        mode:          Game mode ("isolation", "convergence", "freeplay").
-        dna_list:      DNA of the top performers / living creatures.
+        dna_list:      DNA of the living creatures.
         generation:    Current generation number.
         settings_dict: SimSettings serialized via to_dict().
         save_name:     Optional display name for this save.
-        extra:         Optional extra data (e.g. convergence file paths, stats).
 
     Returns:
         The filepath that was written.
@@ -115,21 +109,19 @@ def save_game(
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if not save_name:
-        save_name = f"{mode} gen {generation}"
+        save_name = f"freeplay gen {generation}"
 
-    filename = f"{mode}_{timestamp}.json"
+    filename = f"freeplay_{timestamp}.json"
     filepath = os.path.join(SAVES_DIR, filename)
 
     data: dict = {
         "save_name": save_name,
-        "mode": mode,
+        "mode": "freeplay",
         "generation": generation,
         "timestamp": timestamp,
         "settings": settings_dict,
         "creatures": [dna.to_dict() for dna in dna_list],
     }
-    if extra:
-        data["extra"] = extra
 
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
@@ -150,18 +142,17 @@ def load_game(filepath: str) -> dict:
 
     return {
         "save_name": data.get("save_name", ""),
-        "mode": data["mode"],
+        "mode": data.get("mode", "freeplay"),
         "generation": data.get("generation", 0),
         "timestamp": data.get("timestamp", ""),
         "settings": data.get("settings", {}),
         "creatures": [DNA.from_dict(c) for c in data.get("creatures", [])],
-        "extra": data.get("extra"),
     }
 
 
-def list_saves(mode: str | None = None) -> list[dict]:
+def list_saves() -> list[dict]:
     """
-    List all game saves, optionally filtered by mode.
+    List all game saves.
 
     Returns:
         List of dicts with keys: filepath, save_name, mode, generation, timestamp.
@@ -176,12 +167,10 @@ def list_saves(mode: str | None = None) -> list[dict]:
         try:
             with open(f, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
-            if mode and data.get("mode") != mode:
-                continue
             saves.append({
                 "filepath": str(f),
                 "save_name": data.get("save_name", f.stem),
-                "mode": data.get("mode", "unknown"),
+                "mode": data.get("mode", "freeplay"),
                 "generation": data.get("generation", 0),
                 "timestamp": data.get("timestamp", ""),
                 "creature_count": len(data.get("creatures", [])),
@@ -213,7 +202,6 @@ def _creature_to_dict(creature) -> dict:
         "food_eaten": creature.food_eaten,
         "age": creature.age,
         "alive": creature.alive,
-        "lineage": creature.lineage,
         "last_turn": float(creature.last_turn),
         "under_attack": float(creature.under_attack),
         "death_processed": creature.death_processed,
@@ -229,7 +217,7 @@ def _creature_from_dict(data: dict):
     from pangea.creature import Creature
 
     dna = DNA.from_dict(data["dna"])
-    creature = Creature(dna, data["x"], data["y"], lineage=data.get("lineage", ""))
+    creature = Creature(dna, data["x"], data["y"])
     creature.heading = data["heading"]
     creature.speed = data["speed"]
     creature.energy = data["energy"]
@@ -253,6 +241,7 @@ def _food_to_dict(food) -> dict:
         "energy": food.energy, "radius": food.radius,
         "age": food.age, "lifetime": food.lifetime,
         "is_corpse": food.is_corpse,
+        "species_id": food.species_id,
     }
 
 
@@ -380,7 +369,8 @@ def load_snapshot(filepath: str) -> dict:
 
     food = [
         Food(x=f["x"], y=f["y"], energy=f["energy"], radius=f["radius"],
-             age=f["age"], lifetime=f["lifetime"], is_corpse=f.get("is_corpse", False))
+             age=f["age"], lifetime=f["lifetime"], is_corpse=f.get("is_corpse", False),
+             species_id=f.get("species_id", ""))
         for f in data.get("food", [])
     ]
 

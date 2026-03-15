@@ -20,11 +20,7 @@ from pangea.config import (
     BIOME_MIN_RADIUS,
     BIOME_PREDATOR_BLOCKED,
     BIOME_SPEED_MULTIPLIERS,
-    CARNIVORE_ATTACK_DAMAGE,
     CARNIVORE_ATTACK_RANGE,
-    CARNIVORE_ENERGY_STEAL,
-    DIET_CARNIVORE,
-    DIET_SCAVENGER,
     FOOD_ENERGY,
     FOOD_RADIUS,
     HAZARD_DAMAGE,
@@ -36,8 +32,6 @@ from pangea.config import (
     PREDATOR_VISION,
     CORPSE_ENERGY,
     CORPSE_RADIUS,
-    SCAVENGER_DEATH_ENERGY,
-    SCAVENGER_DEATH_RADIUS,
     SIZE_ARMOR_SCALE,
     TERRITORY_GRID_SIZE,
 )
@@ -56,7 +50,8 @@ class Food:
     radius: float = FOOD_RADIUS
     age: float = 0.0
     lifetime: float = 0.0  # 0 means no decay (set by World from settings)
-    is_corpse: bool = False  # True = scavenger-only corpse food
+    is_corpse: bool = False  # True = corpse food (diet flags determine who eats it)
+    species_id: str = ""     # species of the creature that died (for own/other corpse logic)
 
 
 @dataclass
@@ -475,11 +470,21 @@ class World:
             cr = creature.dna.effective_radius
             eaten_indices = []
 
-            is_scavenger = creature.dna.diet == DIET_SCAVENGER
+            sp = creature.species
             for i, food in enumerate(self.food):
-                # Only scavengers can eat corpses
-                if food.is_corpse and not is_scavenger:
-                    continue
+                # Corpse eating gated by species diet flags
+                if food.is_corpse:
+                    if sp is None:
+                        continue  # no species = can't eat corpses
+                    same_species = food.species_id == creature.dna.species_id
+                    if same_species and not sp.can_eat_own_corpse:
+                        continue
+                    if not same_species and not sp.can_eat_other_corpse:
+                        continue
+                else:
+                    # Plant food gated by can_eat_plants
+                    if sp is not None and not sp.can_eat_plants:
+                        continue
 
                 dx = creature.x - food.x
                 dy = creature.y - food.y
@@ -492,7 +497,9 @@ class World:
 
                 dist = math.sqrt(dx * dx + dy * dy)
                 if dist < cr + food.radius:
-                    creature.eat(food.energy, self.settings.food_heal)
+                    sp_heal = (sp.settings.food_heal if sp else
+                               self.settings.food_heal)
+                    creature.eat(food.energy, sp_heal)
                     eaten_indices.append(i)
 
             for i in reversed(eaten_indices):
@@ -557,44 +564,60 @@ class World:
                     creature.energy -= damage
                     creature.under_attack = 1.0
 
-    # ── Carnivore Combat ──────────────────────────────────────
+    # ── Creature Combat ───────────────────────────────────────
 
-    def _check_carnivore_attacks(self, dt: float) -> None:
-        """Carnivores damage nearby creatures and steal energy."""
+    def _check_creature_attacks(self, dt: float) -> None:
+        """Species with attack flags damage nearby creatures and steal energy."""
         for attacker in self.creatures:
-            if not attacker.alive or attacker.dna.diet != DIET_CARNIVORE:
+            if not attacker.alive:
+                continue
+            sp = attacker.species
+            if sp is None or not sp.can_attack:
                 continue
             attack_range = attacker.dna.effective_radius * CARNIVORE_ATTACK_RANGE
             for victim in self.creatures:
                 if victim is attacker or not victim.alive:
+                    continue
+                # Check own-vs-other species attack permission
+                same_species = attacker.dna.species_id == victim.dna.species_id
+                if same_species and not sp.can_attack_own_species:
+                    continue
+                if not same_species and not sp.can_attack_other_species:
                     continue
                 dx = attacker.x - victim.x
                 dy = attacker.y - victim.y
                 dist = math.sqrt(dx * dx + dy * dy)
                 contact = attack_range + victim.dna.effective_radius
                 if dist < contact:
-                    damage = CARNIVORE_ATTACK_DAMAGE * dt * 60
+                    damage = sp.attack_damage * dt * 60
                     victim.energy -= damage
                     victim.under_attack = 1.0
-                    attacker.gain_energy(damage * CARNIVORE_ENERGY_STEAL)
+                    attacker.gain_energy(damage * sp.energy_steal_fraction)
 
     # ── Scavenger Death Detection ────────────────────────────
 
     def _reward_scavengers(self, newly_dead: list[Creature]) -> None:
         """Give energy to scavengers near recently dead creatures and spawn corpses."""
         for dead in newly_dead:
-            # Scavengers can't eat other scavengers
-            if dead.dna.diet == DIET_SCAVENGER:
-                continue
-            # Instant proximity bonus for scavengers already nearby
+            dead_species_id = dead.dna.species_id
+            # Instant proximity bonus for species that can scavenge
             for creature in self.creatures:
-                if not creature.alive or creature.dna.diet != DIET_SCAVENGER:
+                if not creature.alive:
+                    continue
+                sp = creature.species
+                if sp is None or not sp.can_scavenge:
+                    continue
+                # Check own-vs-other corpse permission
+                same_species = creature.dna.species_id == dead_species_id
+                if same_species and not sp.can_eat_own_corpse:
+                    continue
+                if not same_species and not sp.can_eat_other_corpse:
                     continue
                 dx = creature.x - dead.x
                 dy = creature.y - dead.y
                 dist = math.sqrt(dx * dx + dy * dy)
-                if dist < SCAVENGER_DEATH_RADIUS:
-                    creature.gain_energy(SCAVENGER_DEATH_ENERGY)
+                if dist < sp.scavenge_death_radius:
+                    creature.gain_energy(sp.scavenge_death_energy)
             # Spawn a corpse food item so scavengers can find it later
             self.food.append(Food(
                 x=dead.x,
@@ -603,6 +626,7 @@ class World:
                 radius=CORPSE_RADIUS,
                 lifetime=self.settings.corpse_decay_time,
                 is_corpse=True,
+                species_id=dead_species_id,
             ))
 
     # ── Player Tool Effects ──────────────────────────────────
@@ -655,9 +679,8 @@ class World:
         if self.tools:
             self.tools.update(dt)
 
-        # Compute vision multiplier from day/night cycle
-        night_mult = self.settings.night_vision_multiplier
-        vision_multiplier = night_mult + (1 - night_mult) * self.daylight_factor
+        # Daylight factor for day/night vision
+        daylight = self.daylight_factor
 
         # Reset under_attack flag for all creatures
         for creature in self.creatures:
@@ -667,6 +690,12 @@ class World:
         for creature in self.creatures:
             if not creature.alive:
                 continue
+
+            # Per-species night vision multiplier
+            sp = creature.species
+            night_mult = (sp.settings.night_vision_multiplier if sp
+                          else self.settings.night_vision_multiplier)
+            vision_multiplier = night_mult + (1 - night_mult) * daylight
 
             # Compute biome info at creature's position (single lookup)
             biome = self.get_biome_at(creature.x, creature.y)
@@ -693,10 +722,11 @@ class World:
             # Update physics (with biome speed multiplier)
             creature.update(dt, speed_multiplier=speed_mult)
 
-            # Turn cost — energy penalty proportional to turning
-            if self.settings.turn_cost > 0:
+            # Turn cost — energy penalty proportional to turning (per-species)
+            tc = sp.settings.turn_cost if sp else self.settings.turn_cost
+            if tc > 0:
                 creature.energy -= (
-                    creature.last_turn * self.settings.turn_cost * dt * 60
+                    creature.last_turn * tc * dt * 60
                 )
 
             # Territory tracking
@@ -719,8 +749,8 @@ class World:
             # Enforce boundaries
             self.enforce_boundaries(creature)
 
-        # Carnivore attacks
-        self._check_carnivore_attacks(dt)
+        # Creature attacks (species with attack flags)
+        self._check_creature_attacks(dt)
 
         # Update predators (blocked from mountain biomes)
         blocked_biomes = [b for b in self.biomes if b.biome_type in BIOME_PREDATOR_BLOCKED]
@@ -800,41 +830,46 @@ class World:
         """
         Check all living creatures for breeding eligibility.
 
-        Uses per-diet settings for breeding thresholds and population caps.
+        Uses per-species settings for breeding thresholds and population caps.
         Eligible creatures produce one mutated offspring nearby.
         Returns list of newly spawned children.
         """
         from pangea.evolution import breed_creature
-        from pangea.config import DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER
 
-        # Pre-compute per-diet alive counts
-        diet_alive = {
-            DIET_HERBIVORE: self.alive_count_by_diet(DIET_HERBIVORE),
-            DIET_CARNIVORE: self.alive_count_by_diet(DIET_CARNIVORE),
-            DIET_SCAVENGER: self.alive_count_by_diet(DIET_SCAVENGER),
-        }
-        # Track new children per diet for cap enforcement
-        diet_new = {DIET_HERBIVORE: 0, DIET_CARNIVORE: 0, DIET_SCAVENGER: 0}
+        registry = self.settings.species_registry
+
+        # Pre-compute per-species alive counts
+        species_alive: dict[str, int] = {}
+        for sp in registry.all():
+            species_alive[sp.id] = self.alive_count_by_species(sp.id)
+        # Track new children per species for cap enforcement
+        species_new: dict[str, int] = {sp.id: 0 for sp in registry.all()}
 
         new_children: list[Creature] = []
         for creature in list(self.creatures):
-            diet = creature.dna.diet
-            ds = self.settings.diet_settings(diet)
+            sid = creature.dna.species_id
+            sp = registry.get(sid)
+            if sp is None:
+                continue
+            if not sp.enabled:
+                continue
+            ss = sp.settings
 
-            if not creature.can_breed(ds):
+            if not creature.can_breed(ss):
                 continue
 
-            # Per-diet hard cap check
-            if diet_alive[diet] + diet_new[diet] >= ds.freeplay_hard_cap:
+            # Per-species hard cap check
+            alive_count = species_alive.get(sid, 0)
+            new_count = species_new.get(sid, 0)
+            if alive_count + new_count >= ss.freeplay_hard_cap:
                 continue
 
             child_dna = breed_creature(
                 creature,
-                mutation_rate=ds.mutation_rate,
-                mutation_strength=ds.mutation_strength,
-                weight_clamp=ds.weight_clamp,
-                trait_mutation_range=ds.trait_mutation_range,
-                diet_mutation_rate=ds.diet_mutation_rate,
+                mutation_rate=ss.mutation_rate,
+                mutation_strength=ss.mutation_strength,
+                weight_clamp=ss.weight_clamp,
+                trait_mutation_range=ss.trait_mutation_range,
             )
 
             # Spawn child near parent
@@ -845,19 +880,19 @@ class World:
             cx = max(10, min(self.width - 10, cx))
             cy = max(10, min(self.height - 10, cy))
 
-            child = Creature(child_dna, cx, cy, lineage=creature.lineage)
-            child.energy = ds.freeplay_child_energy
+            child = Creature(child_dna, cx, cy,
+                             species=creature.species)
+            child.energy = ss.freeplay_child_energy
             child.generation = creature.generation + 1
 
             # Deduct cost and set cooldown on parent
-            creature.energy -= ds.freeplay_breed_energy_cost
-            creature.breed_cooldown = ds.freeplay_breed_cooldown
+            creature.energy -= ss.freeplay_breed_energy_cost
+            creature.breed_cooldown = ss.freeplay_breed_cooldown
             creature.offspring_count += 1
 
-            # Track new child's diet (may differ from parent if diet mutated)
-            child_diet = child_dna.diet
-            if child_diet in diet_new:
-                diet_new[child_diet] += 1
+            # Track new child's species
+            if sid in species_new:
+                species_new[sid] += 1
             new_children.append(child)
 
         self.creatures.extend(new_children)
@@ -889,14 +924,7 @@ class World:
         """Return the number of living creatures."""
         return sum(1 for c in self.creatures if c.alive)
 
-    def alive_count_by_diet(self, diet: int) -> int:
-        """Return the number of living creatures with a specific diet."""
-        return sum(1 for c in self.creatures if c.alive and c.dna.diet == diet)
+    def alive_count_by_species(self, species_id: str) -> int:
+        """Return the number of living creatures of a specific species."""
+        return sum(1 for c in self.creatures if c.alive and c.dna.species_id == species_id)
 
-    def alive_count_by_lineage(self, lineage: str) -> int:
-        """Return the number of living creatures in a specific lineage."""
-        return sum(1 for c in self.creatures if c.alive and c.lineage == lineage)
-
-    def food_eaten_by_lineage(self, lineage: str) -> int:
-        """Return total food eaten by a specific lineage."""
-        return sum(c.food_eaten for c in self.creatures if c.lineage == lineage)

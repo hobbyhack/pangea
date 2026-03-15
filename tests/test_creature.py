@@ -8,22 +8,21 @@ import pytest
 from pangea.config import (
     BASE_ENERGY,
     CARNIVORE_FOOD_PENALTY,
-    DIET_CARNIVORE,
-    DIET_HERBIVORE,
-    DIET_SCAVENGER,
     HERBIVORE_FOOD_BONUS,
     NN_HIDDEN_SIZE,
     NN_INPUT_SIZE,
     NN_OUTPUT_SIZE,
+    SCAVENGER_FOOD_PENALTY,
 )
 from pangea.creature import Creature
 from pangea.dna import DNA
+from pangea.species import default_herbivore, default_carnivore, default_scavenger
 from pangea.world import Food
 
 
 class TestCreature:
     def _make_creature(self, x=100.0, y=100.0, speed=20, size=20, vision=20,
-                       efficiency=20, lifespan=20):
+                       efficiency=20, lifespan=20, species=None):
         """Helper to create a creature with specified traits."""
         weights = [
             np.random.randn(NN_INPUT_SIZE, NN_HIDDEN_SIZE) * 0.5,
@@ -31,9 +30,10 @@ class TestCreature:
             np.random.randn(NN_HIDDEN_SIZE, NN_OUTPUT_SIZE) * 0.5,
             np.zeros(NN_OUTPUT_SIZE),
         ]
+        species_id = species.id if species else "herbivore"
         dna = DNA(weights=weights, speed=speed, size=size, vision=vision,
-                  efficiency=efficiency, lifespan=lifespan)
-        return Creature(dna, x, y)
+                  efficiency=efficiency, lifespan=lifespan, species_id=species_id)
+        return Creature(dna, x, y, species=species)
 
     def test_initial_state(self):
         """New creature should start alive with full energy."""
@@ -126,11 +126,11 @@ class TestCreature:
 
     def test_eat_increases_energy_and_count(self):
         """Eating should increase energy and food_eaten counter."""
-        from pangea.config import HERBIVORE_FOOD_BONUS
-        c = self._make_creature()
+        herb = default_herbivore()
+        c = self._make_creature(species=herb)
         c.energy = 50.0
         c.eat(30.0)
-        # Default diet is herbivore, gets bonus
+        # Default species is herbivore, gets bonus
         assert c.energy == 50.0 + 30.0 * HERBIVORE_FOOD_BONUS
         assert c.food_eaten == 1
 
@@ -145,35 +145,29 @@ class TestCreature:
         assert c.y == pos_y
         assert c.energy == 50.0
 
-    def test_lineage_attribute(self):
-        """Creature should store lineage correctly."""
-        dna = DNA.random()
-        c = Creature(dna, 100, 100, lineage="A")
-        assert c.lineage == "A"
-
     def test_herbivore_food_bonus(self):
         """Herbivores should get bonus energy from food."""
-        c = self._make_creature()
-        c.dna.diet = DIET_HERBIVORE
+        herb = default_herbivore()
+        c = self._make_creature(species=herb)
         c.energy = 50.0
         c.eat(20.0)
         assert c.energy == pytest.approx(50.0 + 20.0 * HERBIVORE_FOOD_BONUS)
 
     def test_carnivore_food_penalty(self):
         """Carnivores should get reduced energy from plant food."""
-        c = self._make_creature()
-        c.dna.diet = DIET_CARNIVORE
+        carn = default_carnivore()
+        c = self._make_creature(species=carn)
         c.energy = 50.0
         c.eat(20.0)
         assert c.energy == pytest.approx(50.0 + 20.0 * CARNIVORE_FOOD_PENALTY)
 
     def test_scavenger_food_penalty(self):
         """Scavengers should eat food at reduced rate (0.7x)."""
-        c = self._make_creature()
-        c.dna.diet = DIET_SCAVENGER
+        scav = default_scavenger()
+        c = self._make_creature(species=scav)
         c.energy = 50.0
         c.eat(20.0)
-        assert c.energy == pytest.approx(64.0)  # 50 + 20*0.7
+        assert c.energy == pytest.approx(50.0 + 20.0 * SCAVENGER_FOOD_PENALTY)
 
     def test_gain_energy(self):
         """gain_energy should add energy without food count."""

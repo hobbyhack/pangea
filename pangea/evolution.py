@@ -20,9 +20,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from pangea.config import (
-    DIET_CARNIVORE,
-    DIET_HERBIVORE,
-    DIET_SCAVENGER,
     EVOLUTION_POINTS,
     FITNESS_ENERGY_WEIGHT,
     FITNESS_FOOD_WEIGHT,
@@ -34,13 +31,12 @@ from pangea.config import (
     TOP_PERFORMERS_COUNT,
     TRAIT_MUTATION_RANGE,
 )
-
-DIET_MUTATION_RATE = 0.05  # 5% chance diet changes per offspring
 from pangea.creature import Creature
 from pangea.dna import DNA
 
 if TYPE_CHECKING:
-    from pangea.settings import DietSettings, SimSettings
+    from pangea.settings import SimSettings
+    from pangea.species import SpeciesSettings
 
 
 # ── Fitness ──────────────────────────────────────────────────
@@ -60,13 +56,28 @@ def evaluate_fitness(
 
     Food eaten is weighted most heavily because it's the primary survival skill.
     Offspring weight rewards creatures that successfully reproduced.
-    Weights come from settings if provided, otherwise from config defaults.
+    Weights come from per-species settings if available, then SimSettings, then config.
     """
-    food_w = settings.fitness_food_weight if settings else FITNESS_FOOD_WEIGHT
-    time_w = settings.fitness_time_weight if settings else FITNESS_TIME_WEIGHT
-    energy_w = settings.fitness_energy_weight if settings else FITNESS_ENERGY_WEIGHT
-    territory_w = settings.territory_fitness_weight if settings else 0.0
-    offspring_w = settings.fitness_offspring_weight if settings else FITNESS_OFFSPRING_WEIGHT
+    sp = creature.species
+    if sp is not None:
+        ss = sp.settings
+        food_w = ss.fitness_food_weight
+        time_w = ss.fitness_time_weight
+        energy_w = ss.fitness_energy_weight
+        territory_w = ss.territory_fitness_weight
+        offspring_w = ss.fitness_offspring_weight
+    elif settings is not None:
+        food_w = settings.fitness_food_weight
+        time_w = settings.fitness_time_weight
+        energy_w = settings.fitness_energy_weight
+        territory_w = settings.territory_fitness_weight
+        offspring_w = settings.fitness_offspring_weight
+    else:
+        food_w = FITNESS_FOOD_WEIGHT
+        time_w = FITNESS_TIME_WEIGHT
+        energy_w = FITNESS_ENERGY_WEIGHT
+        territory_w = 0.0
+        offspring_w = FITNESS_OFFSPRING_WEIGHT
     return (
         creature.food_eaten * food_w
         + creature.age * time_w
@@ -312,7 +323,7 @@ def create_next_generation(
             speed, size, vision, efficiency, lifespan = crossover_traits(
                 parent_a, parent_b,
             )
-            diet = random.choice([parent_a.diet, parent_b.diet])
+            species_id = random.choice([parent_a.species_id, parent_b.species_id])
         else:
             # Clone a single parent (distribute evenly)
             parent = top_dna[i % len(top_dna)]
@@ -322,23 +333,19 @@ def create_next_generation(
             vision = parent.vision
             efficiency = parent.efficiency
             lifespan = parent.lifespan
-            diet = parent.diet
+            species_id = parent.species_id
 
         # Mutate weights
         child_weights = mutate_weights(
             child_weights, mutation_rate, mutation_strength, weight_clamp,
         )
 
-        # Mutate diet (small chance to switch)
-        if random.random() < DIET_MUTATION_RATE:
-            diet = random.choice([DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER])
-
         # Create child DNA and mutate traits
         child_dna = DNA(
             weights=child_weights,
             speed=speed, size=size, vision=vision,
             efficiency=efficiency, lifespan=lifespan,
-            diet=diet,
+            species_id=species_id,
         )
         s, sz, v, e, lf = mutate_traits(child_dna, trait_mutation_range)
         child_dna.speed = s
@@ -358,26 +365,18 @@ def breed_creature(
     mutation_strength: float = MUTATION_STRENGTH,
     weight_clamp: float = 0.0,
     trait_mutation_range: int = TRAIT_MUTATION_RANGE,
-    diet_mutation_rate: float = 0.0,
 ) -> DNA:
     """
     Produce one offspring DNA from a single parent creature.
 
-    Clones the parent's DNA, applies weight and trait mutation,
-    and possibly mutates diet. Used in freeplay mode for individual
-    continuous breeding.
-
-    Args:
-        diet_mutation_rate: Per-offspring chance to switch diet (0 = disabled).
+    Clones the parent's DNA, applies weight and trait mutation.
+    Species identity is always inherited from parent (no cross-species mutation).
+    Used in freeplay mode for individual continuous breeding.
     """
     child_weights = [w.copy() for w in parent.dna.weights]
     child_weights = mutate_weights(
         child_weights, mutation_rate, mutation_strength, weight_clamp,
     )
-
-    diet = parent.dna.diet
-    if diet_mutation_rate > 0 and random.random() < diet_mutation_rate:
-        diet = random.choice([DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER])
 
     child_dna = DNA(
         weights=child_weights,
@@ -386,7 +385,7 @@ def breed_creature(
         vision=parent.dna.vision,
         efficiency=parent.dna.efficiency,
         lifespan=parent.dna.lifespan,
-        diet=diet,
+        species_id=parent.dna.species_id,
     )
     s, sz, v, e, lf = mutate_traits(child_dna, trait_mutation_range)
     child_dna.speed = s

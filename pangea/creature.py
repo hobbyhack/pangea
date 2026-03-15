@@ -32,37 +32,33 @@ import numpy as np
 from pangea.brain import NeuralNetwork
 from pangea.config import (
     BASE_ENERGY,
-    CARNIVORE_FOOD_PENALTY,
-    DIET_CARNIVORE,
-    DIET_HERBIVORE,
-    DIET_SCAVENGER,
     ENERGY_COST_PER_THRUST,
-    HERBIVORE_FOOD_BONUS,
-    SCAVENGER_FOOD_PENALTY,
 )
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from pangea.settings import SimSettings
+    from pangea.species import Species
 from pangea.dna import DNA
 
 
 class Creature:
     """A single organism in the simulation."""
 
-    def __init__(self, dna: DNA, x: float, y: float, lineage: str = "") -> None:
+    def __init__(self, dna: DNA, x: float, y: float,
+                 species: Species | None = None) -> None:
         self.dna = dna
+        self.species = species  # Species reference for diet behavior
         self.x = x
         self.y = y
         self.heading = np.random.uniform(0, 2 * math.pi)  # facing direction in radians
         self.speed = 0.0  # current speed (0 to max_speed)
 
-        self.energy = BASE_ENERGY
+        self.energy = (species.settings.base_energy if species else BASE_ENERGY)
         self.food_eaten = 0
         self.age = 0.0  # seconds alive this generation
         self.alive = True
-        self.lineage = lineage  # "" for isolation, "A" or "B" for convergence
         self.last_turn = 0.0  # absolute radians turned last frame
         self.under_attack = 0.0  # 0.0 = safe, 1.0 = taking damage this frame
         self.death_processed = False  # True once scavenger rewards have been given
@@ -83,14 +79,14 @@ class Creature:
         """Check if this creature meets all freeplay breeding criteria.
 
         Args:
-            settings: SimSettings or DietSettings — reads freeplay_breed_*
+            settings: SimSettings or SpeciesSettings — reads freeplay_breed_*
                       fields which exist on both.
         """
         return (
             self.alive
             and self.age >= settings.freeplay_breed_min_age
             and self.food_eaten >= settings.freeplay_breed_min_food
-            and self.energy >= settings.freeplay_breed_energy_threshold * BASE_ENERGY
+            and self.energy >= settings.freeplay_breed_energy_threshold * settings.base_energy
             and self.breed_cooldown <= 0
         )
 
@@ -197,7 +193,8 @@ class Creature:
             wall_dist_normalized = min(min_wall_dist / vision, 1.0)
 
         # ─ Energy level ─
-        energy_normalized = min(self.energy / BASE_ENERGY, 1.0)
+        _base = self.species.settings.base_energy if self.species else BASE_ENERGY
+        energy_normalized = min(self.energy / _base, 1.0)
 
         # ─ Nearest creature ─
         if creatures is not None:
@@ -284,10 +281,12 @@ class Creature:
 
         # Drain energy — faster and bigger creatures use more energy
         # Energy cost does NOT scale with biome multiplier
+        _ecpt = (self.species.settings.energy_cost_per_thrust
+                 if self.species else ENERGY_COST_PER_THRUST)
         energy_cost = (
             self.speed
             * (1.0 / self.dna.effective_efficiency)
-            * ENERGY_COST_PER_THRUST
+            * _ecpt
             * dt
             * 60
         )
@@ -314,13 +313,9 @@ class Creature:
     # ── Eating ───────────────────────────────────────────────
 
     def eat(self, food_energy: float, lifespan_heal: float = 0.0) -> None:
-        """Gain energy from eating food, scaled by diet type."""
-        if self.dna.diet == DIET_HERBIVORE:
-            food_energy *= HERBIVORE_FOOD_BONUS
-        elif self.dna.diet == DIET_CARNIVORE:
-            food_energy *= CARNIVORE_FOOD_PENALTY
-        elif self.dna.diet == DIET_SCAVENGER:
-            food_energy *= SCAVENGER_FOOD_PENALTY
+        """Gain energy from eating food, scaled by species plant_food_multiplier."""
+        if self.species is not None:
+            food_energy *= self.species.plant_food_multiplier
 
         self.energy += food_energy
         self.food_eaten += 1

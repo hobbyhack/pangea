@@ -1,8 +1,8 @@
 """
 Player Tools — interactive tools for influencing evolution.
 ============================================================
-During Isolation Mode, the player can use these tools to change
-the environment and steer evolutionary pressure:
+The player can use these tools to change the environment and
+steer evolutionary pressure:
 
     1. Place Food    — click to drop food clusters
     2. Food Drought  — temporarily stop all food spawning

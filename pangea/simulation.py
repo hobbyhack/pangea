@@ -1,8 +1,7 @@
 """
 Simulation — the main game loop tying everything together.
 ============================================================
-Initializes pygame, runs the menu, dispatches to the correct mode
-(Isolation or Convergence), and manages the generation cycle.
+Initializes pygame, runs the menu, and manages the freeplay simulation.
 
 Controls:
     SPACE  → Pause / unpause
@@ -13,7 +12,7 @@ Controls:
     S      → Toggle settings panel (right-side overlay with save/load)
     F10    → Toggle maximized window (keeps title bar / taskbar)
     F11    → Toggle fullscreen
-    1-6    → Select player tool (Isolation mode)
+    1-6    → Select player tool
     ESC    → Pause menu (or close settings panel if open)
     Left-click → Use active tool
 """
@@ -27,10 +26,6 @@ import pygame
 
 import pangea.config as config
 from pangea.config import (
-    CREATURES_PER_LINEAGE,
-    DIET_CARNIVORE,
-    DIET_HERBIVORE,
-    DIET_SCAVENGER,
     FPS,
     NET_SNAPSHOT_INTERVAL,
 )
@@ -38,13 +33,12 @@ from pangea.creature import Creature
 from pangea.dna import DNA
 from pangea.evolution import (
     create_next_generation,
-    evaluate_fitness,
     select_top,
 )
 from pangea.menu import Menu
 from pangea.renderer import Renderer
 from pangea.save_load import (
-    load_game, load_snapshot, load_species, save_game, save_snapshot, save_species,
+    save_snapshot, save_species,
 )
 from pangea.settings import SimSettings
 from pangea.settings_panel import SettingsPanel
@@ -55,10 +49,8 @@ from pangea.protocol import (
     apply_full_state,
     apply_snapshot,
     full_state_from_world,
-    generation_end_msg,
     snapshot_from_world,
     tool_action_msg,
-    settings_change_msg,
 )
 from pangea.tools import TOOL_LIST, PlayerTools
 from pangea.world import World
@@ -157,18 +149,12 @@ class Simulation:
 
             if choice == "quit":
                 self.running = False
-            elif choice in ("isolation", "convergence", "freeplay"):
-                mode_result = self.menu.show_mode_select(choice)
+            elif choice == "freeplay":
+                mode_result = self.menu.show_mode_select()
                 if mode_result is None:
                     continue  # user pressed Back
                 elif mode_result == "new":
-                    # Start fresh
-                    if choice == "isolation":
-                        self._run_isolation()
-                    elif choice == "convergence":
-                        self._run_convergence()
-                    elif choice == "freeplay":
-                        self._run_freeplay()
+                    self._run_freeplay()
                 elif isinstance(mode_result, dict):
                     # Load a save
                     save_data = mode_result
@@ -178,32 +164,19 @@ class Simulation:
                     loaded_settings.world_height = self.settings.world_height
                     self.settings = loaded_settings
 
-                    if choice == "isolation":
-                        self._run_isolation(
+                    if save_data.get("snapshot"):
+                        self._run_freeplay(loaded_snapshot=save_data)
+                    else:
+                        self._run_freeplay(
                             loaded_dna=save_data["creatures"],
-                            loaded_generation=save_data["generation"],
                         )
-                    elif choice == "convergence":
-                        extra = save_data.get("extra") or {}
-                        self._run_convergence(
-                            loaded_dna=save_data["creatures"],
-                            loaded_generation=save_data["generation"],
-                            loaded_extra=extra,
-                        )
-                    elif choice == "freeplay":
-                        if save_data.get("snapshot"):
-                            self._run_freeplay(loaded_snapshot=save_data)
-                        else:
-                            self._run_freeplay(
-                                loaded_dna=save_data["creatures"],
-                            )
                 self._active_world = None
 
             elif choice == "host":
                 result = self.menu.show_host_setup(self.settings)
                 if result is None:
                     continue
-                sub_mode, relay_url, self.settings = result
+                _, relay_url, self.settings = result
                 self.menu.show_connecting("Starting server...")
 
                 # Extract port from relay URL for the embedded server
@@ -259,10 +232,7 @@ class Simulation:
                     self.clock.tick(30)
 
                 if start_game:
-                    if sub_mode == "isolation":
-                        self._run_host_isolation()
-                    elif sub_mode == "freeplay":
-                        self._run_host_freeplay()
+                    self._run_host_freeplay()
 
                 if self._net_host:
                     self._net_host.stop()
@@ -294,299 +264,6 @@ class Simulation:
                 self._active_world = None
 
         pygame.quit()
-
-    # ── Isolation Mode ───────────────────────────────────────
-
-    def _run_isolation(
-        self,
-        loaded_dna: list[DNA] | None = None,
-        loaded_generation: int = 0,
-    ) -> None:
-        """Run the simulation in isolation mode (single-user evolution)."""
-        self.tools = PlayerTools()
-
-        if loaded_dna:
-            # Resume from save — expand loaded top performers into a full population
-            pop = self.settings.population_size
-            dna_list = create_next_generation(
-                loaded_dna,
-                population_size=pop,
-                mutation_rate=self.settings.mutation_rate,
-                mutation_strength=self.settings.mutation_strength,
-                crossover_rate=self.settings.crossover_rate,
-                min_parents=self.settings.min_population,
-                weight_clamp=self.settings.weight_clamp,
-                trait_mutation_range=self.settings.trait_mutation_range,
-            )
-            generation = loaded_generation + 1
-        else:
-            pop = self.settings.population_size
-            dna_list = [DNA.random() for _ in range(pop)]
-            generation = 1
-
-        world = self._create_world(dna_list)
-        world.generation = generation
-
-        while self.running:
-            # Check max generations limit
-            if (self.settings.max_generations > 0
-                    and generation > self.settings.max_generations):
-                return
-
-            result = self._run_generation(world, mode="isolation")
-
-            if result == "main_menu":
-                return
-            elif result == "save_quit":
-                top_dna = select_top(world.creatures, self.settings.top_performers_count, self.settings)
-                # Save full game state for resuming later
-                save_game(
-                    mode="isolation",
-                    dna_list=top_dna,
-                    generation=generation,
-                    settings_dict=self.settings.to_dict(),
-                )
-                # Also save species file for convergence mode use
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filepath = f"species/species_{timestamp}.json"
-                save_species(top_dna, filepath, generation=generation)
-                return
-            elif result == "restart":
-                self.tools.reset()
-                self.generation_history.clear()
-                pop = self.settings.population_size
-                dna_list = [DNA.random() for _ in range(pop)]
-                world = self._create_world(dna_list)
-                generation = 1
-                world.generation = generation
-                self.renderer.reset_tracking()
-                continue
-
-            # Evolve to next generation
-            top_dna = select_top(world.creatures, self.settings.top_performers_count, self.settings)
-
-            fitnesses = [evaluate_fitness(c, self.settings) for c in world.creatures]
-            best = max(fitnesses)
-            avg = sum(fitnesses) / len(fitnesses) if fitnesses else 0
-
-            # Record generation history for evolution panel
-            all_creatures = world.creatures
-            alive = [c for c in all_creatures if c.alive]
-            n = len(alive) if alive else 1
-            n_creatures = len(all_creatures)
-            self.generation_history.append({
-                "gen": generation,
-                "avg_speed": sum(c.dna.speed for c in all_creatures) / n_creatures,
-                "avg_size": sum(c.dna.size for c in all_creatures) / n_creatures,
-                "avg_vision": sum(c.dna.vision for c in all_creatures) / n_creatures,
-                "avg_efficiency": sum(c.dna.efficiency for c in all_creatures) / n_creatures,
-                "avg_lifespan": sum(c.dna.lifespan for c in all_creatures) / n_creatures,
-                "avg_food": sum(c.food_eaten for c in all_creatures) / n_creatures,
-                "alive_pct": len(alive) / n_creatures * 100,
-                "herbivores": sum(1 for c in all_creatures if c.dna.diet == 0),
-                "carnivores": sum(1 for c in all_creatures if c.dna.diet == 1),
-                "scavengers": sum(1 for c in all_creatures if c.dna.diet == 2),
-            })
-
-            self.renderer.draw_generation_stats(world, best, avg, mode="isolation")
-            pygame.display.flip()
-            pygame.time.wait(1500)
-
-            # Create next generation (tools/zones persist across generations)
-            generation += 1
-            pop = self.settings.population_size
-            dna_list = create_next_generation(
-                top_dna,
-                population_size=pop,
-                mutation_rate=self.settings.mutation_rate,
-                mutation_strength=self.settings.mutation_strength,
-                crossover_rate=self.settings.crossover_rate,
-                min_parents=self.settings.min_population,
-                weight_clamp=self.settings.weight_clamp,
-                trait_mutation_range=self.settings.trait_mutation_range,
-            )
-            world = self._create_world(dna_list)
-            world.generation = generation
-            self.renderer.reset_tracking()
-
-    # ── Convergence Mode ─────────────────────────────────────
-
-    def _run_convergence(
-        self,
-        loaded_dna: list[DNA] | None = None,
-        loaded_generation: int = 0,
-        loaded_extra: dict | None = None,
-    ) -> None:
-        """Run the simulation in convergence mode (two competing lineages)."""
-        if loaded_dna and loaded_extra:
-            # Resume from save — split DNA back into A and B lineages
-            file_a = loaded_extra.get("file_a", "")
-            file_b = loaded_extra.get("file_b", "")
-            a_count = loaded_extra.get("a_count", len(loaded_dna) // 2)
-            dna_a = loaded_dna[:a_count] if a_count > 0 else loaded_dna[:1]
-            dna_b = loaded_dna[a_count:] if a_count < len(loaded_dna) else loaded_dna[-1:]
-
-            a_total_food = loaded_extra.get("a_total_food", 0)
-            b_total_food = loaded_extra.get("b_total_food", 0)
-            a_survived_gens = loaded_extra.get("a_survived_gens", 0)
-            b_survived_gens = loaded_extra.get("b_survived_gens", 0)
-            a_alive = loaded_extra.get("a_alive", True)
-            b_alive = loaded_extra.get("b_alive", True)
-            generation = loaded_generation + 1
-        else:
-            result = self.menu.show_file_select()
-            if result is None:
-                return
-
-            file_a, file_b = result
-            try:
-                dna_a, _ = load_species(file_a)
-                dna_b, _ = load_species(file_b)
-            except Exception as exc:
-                self.menu.show_error(f"Failed to load species: {exc}")
-                return
-
-            if not dna_a or not dna_b:
-                self.menu.show_error("Species file has no creatures.")
-                return
-
-            a_total_food = 0
-            b_total_food = 0
-            a_survived_gens = 0
-            b_survived_gens = 0
-            a_alive = True
-            b_alive = True
-            generation = 1
-
-        max_gens = self.settings.convergence_max_generations
-
-        world = self._create_convergence_world(dna_a, dna_b)
-        world.generation = generation
-
-        while self.running and generation <= max_gens:
-            result = self._run_generation(world, mode="convergence")
-
-            if result == "main_menu":
-                return
-            elif result == "save_quit":
-                # Gather top DNA from each lineage
-                a_creatures = [c for c in world.creatures if c.lineage == "A"]
-                b_creatures = [c for c in world.creatures if c.lineage == "B"]
-                top_n = max(1, self.settings.top_performers_count // 2)
-                top_a = select_top(a_creatures, min(top_n, len(a_creatures)), self.settings)
-                top_b = select_top(b_creatures, min(top_n, len(b_creatures)), self.settings)
-                save_game(
-                    mode="convergence",
-                    dna_list=top_a + top_b,
-                    generation=generation,
-                    settings_dict=self.settings.to_dict(),
-                    extra={
-                        "file_a": file_a, "file_b": file_b,
-                        "a_total_food": a_total_food, "b_total_food": b_total_food,
-                        "a_survived_gens": a_survived_gens, "b_survived_gens": b_survived_gens,
-                        "a_alive": a_alive, "b_alive": b_alive,
-                        "a_count": len(top_a), "b_count": len(top_b),
-                    },
-                )
-                return
-            elif result == "restart":
-                try:
-                    dna_a, _ = load_species(file_a)
-                    dna_b, _ = load_species(file_b)
-                except Exception as exc:
-                    self.menu.show_error(f"Failed to reload species: {exc}")
-                    return
-                generation = 1
-                a_total_food = b_total_food = 0
-                a_survived_gens = b_survived_gens = 0
-                a_alive = b_alive = True
-                world = self._create_convergence_world(dna_a, dna_b)
-                world.generation = generation
-                self.renderer.reset_tracking()
-                continue
-
-            gen_a_food = world.food_eaten_by_lineage("A")
-            gen_b_food = world.food_eaten_by_lineage("B")
-            a_total_food += gen_a_food
-            b_total_food += gen_b_food
-
-            a_creatures = [c for c in world.creatures if c.lineage == "A"]
-            b_creatures = [c for c in world.creatures if c.lineage == "B"]
-
-            if a_alive:
-                a_survived_gens = generation
-            if b_alive:
-                b_survived_gens = generation
-
-            fitnesses = [evaluate_fitness(c, self.settings) for c in world.creatures]
-            best = max(fitnesses) if fitnesses else 0
-            avg = sum(fitnesses) / len(fitnesses) if fitnesses else 0
-
-            self.renderer.draw_generation_stats(world, best, avg, mode="convergence")
-            pygame.display.flip()
-            pygame.time.wait(1500)
-
-            top_n = max(1, self.settings.top_performers_count // 2)
-            top_a = select_top(a_creatures, min(top_n, len(a_creatures)), self.settings)
-            top_b = select_top(b_creatures, min(top_n, len(b_creatures)), self.settings)
-
-            if not top_a:
-                a_alive = False
-            if not top_b:
-                b_alive = False
-
-            if not a_alive and not b_alive:
-                break
-            elif not a_alive:
-                break
-            elif not b_alive:
-                break
-
-            generation += 1
-            new_a = create_next_generation(
-                top_a, CREATURES_PER_LINEAGE,
-                mutation_rate=self.settings.mutation_rate,
-                mutation_strength=self.settings.mutation_strength,
-                crossover_rate=self.settings.crossover_rate,
-                min_parents=self.settings.min_population,
-                weight_clamp=self.settings.weight_clamp,
-                trait_mutation_range=self.settings.trait_mutation_range,
-            )
-            new_b = create_next_generation(
-                top_b, CREATURES_PER_LINEAGE,
-                mutation_rate=self.settings.mutation_rate,
-                mutation_strength=self.settings.mutation_strength,
-                crossover_rate=self.settings.crossover_rate,
-                min_parents=self.settings.min_population,
-                weight_clamp=self.settings.weight_clamp,
-                trait_mutation_range=self.settings.trait_mutation_range,
-            )
-
-            all_creatures = []
-            for dna in new_a:
-                x = random.uniform(50, self.settings.world_width - 50)
-                y = random.uniform(50, self.settings.world_height - 50)
-                all_creatures.append(Creature(dna, x, y, lineage="A"))
-            for dna in new_b:
-                x = random.uniform(50, self.settings.world_width - 50)
-                y = random.uniform(50, self.settings.world_height - 50)
-                all_creatures.append(Creature(dna, x, y, lineage="B"))
-
-            world = World(all_creatures, settings=self.settings)
-            self._active_world = world
-            world.generation = generation
-            self.renderer.reset_tracking()
-
-        if a_total_food > b_total_food:
-            winner = "A"
-        elif b_total_food > a_total_food:
-            winner = "B"
-        else:
-            winner = "tie"
-
-        self.menu.show_convergence_results(
-            winner, a_total_food, b_total_food, a_survived_gens, b_survived_gens
-        )
 
     # ── Freeplay Mode ─────────────────────────────────────────
 
@@ -649,12 +326,11 @@ class Simulation:
             self._freeplay_history: list[dict] = []
             self._freeplay_history_timer = 0.0
         else:
-            # Per-diet initial populations
+            # Per-species initial populations
             dna_list = []
-            for diet in (DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER):
-                ds = self.settings.diet_settings(diet)
-                for _ in range(ds.freeplay_initial_population):
-                    dna_list.append(DNA.random_for_diet(diet))
+            for sp in self.settings.species_registry.all():
+                for _ in range(sp.settings.freeplay_initial_population):
+                    dna_list.append(DNA.random_for_species(sp.id))
             world = self._create_world(dna_list)
             world.freeplay = True
             world.generation = 0
@@ -683,7 +359,7 @@ class Simulation:
                     continue
 
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
-                    self.settings_panel.toggle()
+                    self.settings_panel.toggle(self.settings)
                     continue
 
                 if self.settings_panel.visible:
@@ -714,7 +390,7 @@ class Simulation:
                             self.settings_panel.visible = False
                         else:
                             pause_result, self.settings = self.menu.show_pause_menu(
-                                "freeplay", self.settings
+                                self.settings
                             )
                             if pause_result == "resume":
                                 self.paused = False
@@ -735,7 +411,6 @@ class Simulation:
                                     freeplay_state=freeplay_state,
                                     tools=self.tools,
                                 )
-                                # Also save species file for convergence use
                                 alive = [c for c in world.creatures if c.alive]
                                 if alive:
                                     top_dna = [c.dna for c in sorted(
@@ -745,11 +420,25 @@ class Simulation:
                                     filepath = f"species/freeplay_{timestamp}.json"
                                     save_species(top_dna, filepath, generation=0)
                                 return
+                            elif pause_result.startswith("import_species:"):
+                                imported_id = pause_result.split(":", 1)[1]
+                                sp = self.settings.species_registry.get(imported_id)
+                                if sp and hasattr(sp, "_imported_dna"):
+                                    for dna in sp._imported_dna:
+                                        x = random.uniform(50, self.settings.world_width - 50)
+                                        y = random.uniform(50, self.settings.world_height - 50)
+                                        child = Creature(dna, x, y, species=sp)
+                                        child.energy = sp.settings.freeplay_child_energy
+                                        world.creatures.append(child)
+                                    del sp._imported_dna
+                                self.paused = False
                             elif pause_result in ("main_menu", "restart"):
                                 if pause_result == "restart":
                                     self.tools.reset()
-                                    pop = self.settings.freeplay_initial_population
-                                    dna_list = [DNA.random() for _ in range(pop)]
+                                    dna_list = []
+                                    for sp in self.settings.species_registry.all():
+                                        for _ in range(sp.settings.freeplay_initial_population):
+                                            dna_list.append(DNA.random_for_species(sp.id))
                                     world = self._create_world(dna_list)
                                     world.freeplay = True
                                     world.generation = 0
@@ -858,58 +547,60 @@ class Simulation:
                 if alive > self._freeplay_peak_pop:
                     self._freeplay_peak_pop = alive
 
-            # Check for per-diet extinction
+            # Check for per-species extinction
             if not self.paused:
                 from pangea.settings import (
                     EXTINCTION_RESPAWN_BEST,
                     EXTINCTION_RESPAWN_RANDOM,
                 )
-                for diet in (DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER):
-                    if world.alive_count_by_diet(diet) > 0:
+                for sp in self.settings.species_registry.all():
+                    if world.alive_count_by_species(sp.id) > 0:
                         continue
-                    ds = self.settings.diet_settings(diet)
-                    if ds.extinction_mode == EXTINCTION_RESPAWN_BEST:
-                        # Select from dead creatures of this diet
-                        diet_creatures = [
-                            c for c in world.creatures if c.dna.diet == diet
+                    if not sp.enabled:
+                        continue
+                    ss = sp.settings
+                    if ss.extinction_mode == EXTINCTION_RESPAWN_BEST:
+                        # Select from dead creatures of this species
+                        sp_creatures = [
+                            c for c in world.creatures if c.dna.species_id == sp.id
                         ]
                         top_dna = select_top(
-                            diet_creatures,
-                            min(ds.top_performers_count, len(diet_creatures)),
+                            sp_creatures,
+                            min(ss.top_performers_count, len(sp_creatures)),
                             self.settings,
                         )
-                        respawn_count = ds.freeplay_initial_population
+                        respawn_count = ss.freeplay_initial_population
                         if top_dna:
                             new_dna = create_next_generation(
                                 top_dna,
                                 population_size=respawn_count,
-                                mutation_rate=ds.mutation_rate,
-                                mutation_strength=ds.mutation_strength,
-                                crossover_rate=ds.crossover_rate,
-                                min_parents=ds.min_population,
-                                weight_clamp=ds.weight_clamp,
-                                trait_mutation_range=ds.trait_mutation_range,
+                                mutation_rate=ss.mutation_rate,
+                                mutation_strength=ss.mutation_strength,
+                                crossover_rate=ss.crossover_rate,
+                                min_parents=ss.min_population,
+                                weight_clamp=ss.weight_clamp,
+                                trait_mutation_range=ss.trait_mutation_range,
                             )
                         else:
                             new_dna = [
-                                DNA.random_for_diet(diet)
+                                DNA.random_for_species(sp.id)
                                 for _ in range(respawn_count)
                             ]
                         for dna in new_dna:
-                            dna.diet = diet  # ensure diet stays correct
+                            dna.species_id = sp.id
                             x = random.uniform(50, self.settings.world_width - 50)
                             y = random.uniform(50, self.settings.world_height - 50)
-                            child = Creature(dna, x, y)
-                            child.energy = ds.freeplay_child_energy
+                            child = Creature(dna, x, y, species=sp)
+                            child.energy = ss.freeplay_child_energy
                             world.creatures.append(child)
-                    elif ds.extinction_mode == EXTINCTION_RESPAWN_RANDOM:
-                        respawn_count = max(1, ds.freeplay_initial_population // 2)
+                    elif ss.extinction_mode == EXTINCTION_RESPAWN_RANDOM:
+                        respawn_count = max(1, ss.freeplay_initial_population // 2)
                         for _ in range(respawn_count):
-                            dna = DNA.random_for_diet(diet)
+                            dna = DNA.random_for_species(sp.id)
                             x = random.uniform(50, self.settings.world_width - 50)
                             y = random.uniform(50, self.settings.world_height - 50)
-                            child = Creature(dna, x, y)
-                            child.energy = ds.freeplay_child_energy
+                            child = Creature(dna, x, y, species=sp)
+                            child.energy = ss.freeplay_child_energy
                             world.creatures.append(child)
                     # EXTINCTION_PERMANENT: do nothing
 
@@ -919,435 +610,32 @@ class Simulation:
 
             # Render
             self.renderer.draw(
-                world, "freeplay", self.paused,
+                world, self.paused,
                 tools=self.tools,
                 show_toolbar=True,
                 fast_forward=self.fast_forward_multiplier if self.fast_forward else 0,
                 debug=self.debug_mode,
             )
-            self.renderer.draw_creature_stats(world, "freeplay")
+            self.renderer.draw_creature_stats(world)
             if self.show_evolution_panel:
                 self.renderer.draw_evolution_panel(
-                    world, "freeplay", self._freeplay_history,
+                    world, self._freeplay_history,
                 )
             if self.tools.active_tool != "none":
                 self.renderer.draw_tool_cursor(self.tools)
             self.settings_panel.draw(self.screen, self.settings, dt)
             pygame.display.flip()
-
-    # ── Generation Loop ──────────────────────────────────────
-
-    def _run_generation(self, world: World, mode: str = "isolation") -> str:
-        """
-        Run a single generation until it ends or the user interrupts.
-
-        Returns:
-            "done", "main_menu", "save_quit", or "restart".
-        """
-        self.paused = False
-        show_toolbar = mode == "isolation"
-
-        while not world.is_generation_over():
-            dt = self.clock.tick(FPS) / 1000.0
-            dt = min(dt, 0.05)
-
-            # Handle events
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    self.running = False
-                    return "main_menu"
-
-                if event.type == pygame.VIDEORESIZE:
-                    self._handle_resize(event.w, event.h)
-                    continue
-
-                # S key toggles the settings panel
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
-                    self.settings_panel.toggle()
-                    continue
-
-                # Route events to settings panel first (it consumes them when visible)
-                if self.settings_panel.visible:
-                    self.settings = self.settings_panel.handle_event(event, self.settings)
-                    # If the click was inside the panel, skip normal handling
-                    if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEWHEEL):
-                        if self.settings_panel.consumes_click(*pygame.mouse.get_pos()):
-                            continue
-
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_F11:
-                        self._toggle_fullscreen()
-                    elif event.key == pygame.K_F10:
-                        self._toggle_maximized()
-                    elif event.key == pygame.K_SPACE:
-                        self.paused = not self.paused
-                    elif event.key == pygame.K_f:
-                        self.fast_forward = not self.fast_forward
-                    elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
-                        self.fast_forward_multiplier = min(20, self.fast_forward_multiplier + 1)
-                    elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-                        self.fast_forward_multiplier = max(2, self.fast_forward_multiplier - 1)
-                    elif event.key == pygame.K_d:
-                        self.debug_mode = not self.debug_mode
-                    elif event.key == pygame.K_e:
-                        self.show_evolution_panel = not self.show_evolution_panel
-                    elif event.key == pygame.K_ESCAPE:
-                        if self.settings_panel.visible:
-                            self.settings_panel.visible = False
-                        else:
-                            pause_result, self.settings = self.menu.show_pause_menu(
-                                mode, self.settings
-                            )
-                            if pause_result == "resume":
-                                self.paused = False
-                            elif pause_result in ("save_quit", "main_menu", "restart"):
-                                return pause_result
-                    # Tool hotkeys (1-6)
-                    elif mode == "isolation" and pygame.K_1 <= event.key <= pygame.K_6:
-                        tool_idx = event.key - pygame.K_1
-                        if tool_idx < len(TOOL_LIST):
-                            self.tools.select_tool(TOOL_LIST[tool_idx])
-
-                # Mouse events for player tools (isolation mode only)
-                # Right-click to inspect creature (any mode)
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
-                    mx, my = event.pos
-                    if not self.settings_panel.consumes_click(mx, my):
-                        wmx, wmy = self._screen_to_world(mx, my)
-                        if not self.renderer.try_select_creature(world, wmx, wmy):
-                            self.renderer.deselect_creature()
-
-                if mode == "isolation":
-                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                        mx, my = event.pos
-                        if self.settings_panel.consumes_click(mx, my):
-                            continue
-                        # Check if click is on toolbar area (top-right)
-                        toolbar_x = config.WINDOW_WIDTH - 380
-                        if my < 75 and mx > toolbar_x:
-                            # Toolbar click — select tool
-                            btn_w = 58
-                            gap = 4
-                            for i, tool in enumerate(TOOL_LIST):
-                                tx = toolbar_x + i * (btn_w + gap)
-                                if tx <= mx <= tx + btn_w:
-                                    self.tools.select_tool(tool)
-                                    break
-                        elif self.tools.active_tool == "none":
-                            # No tool active — try to select a creature
-                            wmx, wmy = self._screen_to_world(mx, my)
-                            if not self.renderer.try_select_creature(world, wmx, wmy):
-                                self.renderer.deselect_creature()
-                        else:
-                            # World click — use active tool
-                            wmx, wmy = self._screen_to_world(mx, my)
-                            food_positions = self.tools.on_mouse_down(wmx, wmy)
-                            for fx, fy in food_positions:
-                                world.add_food_at(fx, fy)
-
-                    if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                        mx, my = event.pos
-                        wmx, wmy = self._screen_to_world(mx, my)
-                        self.tools.on_mouse_up(wmx, wmy)
-
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    # Convergence mode — left-click to inspect
-                    mx, my = event.pos
-                    if not self.settings_panel.consumes_click(mx, my):
-                        wmx, wmy = self._screen_to_world(mx, my)
-                        if not self.renderer.try_select_creature(world, wmx, wmy):
-                            self.renderer.deselect_creature()
-
-            # Update settings panel dragging
-            self.settings = self.settings_panel.update_dragging(self.settings)
-
-            # Update simulation (skip if paused)
-            if not self.paused:
-                if self.fast_forward:
-                    # Use fixed timestep to avoid dt inflation from slow frames
-                    step_dt = 1.0 / FPS
-                    for _ in range(self.fast_forward_multiplier):
-                        world.update(step_dt)
-                        if world.is_generation_over():
-                            break
-                else:
-                    world.update(dt)
-
-            # Render every frame to keep UI smooth
-            self.renderer.draw(
-                world, mode, self.paused,
-                tools=self.tools if mode == "isolation" else None,
-                show_toolbar=show_toolbar,
-                fast_forward=self.fast_forward_multiplier if self.fast_forward else 0,
-                debug=self.debug_mode,
-            )
-            self.renderer.draw_creature_stats(world, mode)
-            if self.show_evolution_panel:
-                self.renderer.draw_evolution_panel(
-                    world, mode, self.generation_history,
-                )
-            if mode == "isolation" and self.tools.active_tool != "none":
-                self.renderer.draw_tool_cursor(self.tools)
-            self.settings_panel.draw(self.screen, self.settings, dt)
-            pygame.display.flip()
-
-        return "done"
-
-    # ── Host Mode (Isolation) ────────────────────────────────
-
-    def _run_host_isolation(self) -> None:
-        """Run isolation mode as network host, broadcasting state to clients."""
-        self.tools = PlayerTools()
-        self.generation_history.clear()
-        pop = self.settings.population_size
-        dna_list = [DNA.random() for _ in range(pop)]
-        world = self._create_world(dna_list)
-        generation = 1
-        world.generation = generation
-        frame_counter = 0
-
-        # Send initial full state to all connected clients
-        if self._net_host:
-            self._net_host.broadcast_full_state(
-                full_state_from_world(
-                    world, self.settings, self.tools,
-                    "isolation", generation, self.generation_history,
-                )
-            )
-
-        while self.running:
-            if (self.settings.max_generations > 0
-                    and generation > self.settings.max_generations):
-                return
-
-            # Run one generation
-            result = self._run_host_generation(world, "isolation", frame_counter)
-            frame_counter = result[1] if isinstance(result, tuple) else frame_counter
-
-            action = result[0] if isinstance(result, tuple) else result
-            if action in ("main_menu", "save_quit"):
-                if action == "save_quit":
-                    top_dna = select_top(world.creatures, self.settings.top_performers_count, self.settings)
-                    save_game(
-                        mode="isolation", dna_list=top_dna,
-                        generation=generation, settings_dict=self.settings.to_dict(),
-                    )
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    filepath = f"species/species_{timestamp}.json"
-                    save_species(top_dna, filepath, generation=generation)
-                return
-            elif action == "restart":
-                self.tools.reset()
-                self.generation_history.clear()
-                dna_list = [DNA.random() for _ in range(pop)]
-                world = self._create_world(dna_list)
-                generation = 1
-                world.generation = generation
-                self.renderer.reset_tracking()
-                frame_counter = 0
-                continue
-
-            # Evolve to next generation
-            top_dna = select_top(world.creatures, self.settings.top_performers_count, self.settings)
-            fitnesses = [evaluate_fitness(c, self.settings) for c in world.creatures]
-            best = max(fitnesses)
-            avg = sum(fitnesses) / len(fitnesses) if fitnesses else 0
-
-            all_creatures = world.creatures
-            n_creatures = len(all_creatures)
-            alive = [c for c in all_creatures if c.alive]
-            self.generation_history.append({
-                "gen": generation,
-                "avg_speed": sum(c.dna.speed for c in all_creatures) / n_creatures,
-                "avg_size": sum(c.dna.size for c in all_creatures) / n_creatures,
-                "avg_vision": sum(c.dna.vision for c in all_creatures) / n_creatures,
-                "avg_efficiency": sum(c.dna.efficiency for c in all_creatures) / n_creatures,
-                "avg_lifespan": sum(c.dna.lifespan for c in all_creatures) / n_creatures,
-                "avg_food": sum(c.food_eaten for c in all_creatures) / n_creatures,
-                "alive_pct": len(alive) / n_creatures * 100,
-                "herbivores": sum(1 for c in all_creatures if c.dna.diet == 0),
-                "carnivores": sum(1 for c in all_creatures if c.dna.diet == 1),
-                "scavengers": sum(1 for c in all_creatures if c.dna.diet == 2),
-            })
-
-            # Broadcast generation end to clients
-            if self._net_host:
-                stats = self.generation_history[-1]
-                top_dna_dicts = [d.to_dict() for d in top_dna]
-                self._net_host.send_to_clients(
-                    generation_end_msg(generation, top_dna_dicts, stats)
-                )
-
-            self.renderer.draw_generation_stats(world, best, avg, mode="isolation")
-            pygame.display.flip()
-            pygame.time.wait(1500)
-
-            generation += 1
-            dna_list = create_next_generation(
-                top_dna, population_size=pop,
-                mutation_rate=self.settings.mutation_rate,
-                mutation_strength=self.settings.mutation_strength,
-                crossover_rate=self.settings.crossover_rate,
-                min_parents=self.settings.min_population,
-                weight_clamp=self.settings.weight_clamp,
-                trait_mutation_range=self.settings.trait_mutation_range,
-            )
-            world = self._create_world(dna_list)
-            world.generation = generation
-            self.renderer.reset_tracking()
-
-    def _run_host_generation(
-        self, world: World, mode: str, frame_counter: int,
-    ) -> tuple[str, int]:
-        """
-        Run a single generation as host — same as _run_generation but with
-        network broadcasting and remote tool action processing.
-        """
-        self.paused = False
-        show_toolbar = True
-
-        while not world.is_generation_over():
-            dt = self.clock.tick(FPS) / 1000.0
-            dt = min(dt, 0.05)
-            frame_counter += 1
-
-            # Process remote tool actions from clients
-            if self._net_host:
-                for msg in self._net_host.poll_incoming():
-                    self._apply_remote_action(msg, world)
-
-            # Handle local events (same as _run_generation)
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    self.running = False
-                    return ("main_menu", frame_counter)
-
-                if event.type == pygame.VIDEORESIZE:
-                    self._handle_resize(event.w, event.h)
-                    continue
-
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
-                    self.settings_panel.toggle()
-                    continue
-
-                if self.settings_panel.visible:
-                    self.settings = self.settings_panel.handle_event(event, self.settings)
-                    if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEWHEEL):
-                        if self.settings_panel.consumes_click(*pygame.mouse.get_pos()):
-                            continue
-
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_F11:
-                        self._toggle_fullscreen()
-                    elif event.key == pygame.K_F10:
-                        self._toggle_maximized()
-                    elif event.key == pygame.K_SPACE:
-                        self.paused = not self.paused
-                    elif event.key == pygame.K_f:
-                        self.fast_forward = not self.fast_forward
-                    elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
-                        self.fast_forward_multiplier = min(20, self.fast_forward_multiplier + 1)
-                    elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-                        self.fast_forward_multiplier = max(2, self.fast_forward_multiplier - 1)
-                    elif event.key == pygame.K_d:
-                        self.debug_mode = not self.debug_mode
-                    elif event.key == pygame.K_e:
-                        self.show_evolution_panel = not self.show_evolution_panel
-                    elif event.key == pygame.K_ESCAPE:
-                        if self.settings_panel.visible:
-                            self.settings_panel.visible = False
-                        else:
-                            pause_result, self.settings = self.menu.show_pause_menu(
-                                mode, self.settings
-                            )
-                            if pause_result == "resume":
-                                self.paused = False
-                            elif pause_result in ("save_quit", "main_menu", "restart"):
-                                return (pause_result, frame_counter)
-                    elif pygame.K_1 <= event.key <= pygame.K_6:
-                        tool_idx = event.key - pygame.K_1
-                        if tool_idx < len(TOOL_LIST):
-                            self.tools.select_tool(TOOL_LIST[tool_idx])
-
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
-                    mx, my = event.pos
-                    if not self.settings_panel.consumes_click(mx, my):
-                        wmx, wmy = self._screen_to_world(mx, my)
-                        if not self.renderer.try_select_creature(world, wmx, wmy):
-                            self.renderer.deselect_creature()
-
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    mx, my = event.pos
-                    if self.settings_panel.consumes_click(mx, my):
-                        continue
-                    toolbar_x = config.WINDOW_WIDTH - 380
-                    if my < 75 and mx > toolbar_x:
-                        btn_w = 58
-                        gap = 4
-                        for i, tool in enumerate(TOOL_LIST):
-                            tx = toolbar_x + i * (btn_w + gap)
-                            if tx <= mx <= tx + btn_w:
-                                self.tools.select_tool(tool)
-                                break
-                    elif self.tools.active_tool == "none":
-                        wmx, wmy = self._screen_to_world(mx, my)
-                        if not self.renderer.try_select_creature(world, wmx, wmy):
-                            self.renderer.deselect_creature()
-                    else:
-                        wmx, wmy = self._screen_to_world(mx, my)
-                        food_positions = self.tools.on_mouse_down(wmx, wmy)
-                        for fx, fy in food_positions:
-                            world.add_food_at(fx, fy)
-
-                if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-                    mx, my = event.pos
-                    wmx, wmy = self._screen_to_world(mx, my)
-                    self.tools.on_mouse_up(wmx, wmy)
-
-            self.settings = self.settings_panel.update_dragging(self.settings)
-
-            if not self.paused:
-                if self.fast_forward:
-                    step_dt = 1.0 / FPS
-                    for _ in range(self.fast_forward_multiplier):
-                        world.update(step_dt)
-                        if world.is_generation_over():
-                            break
-                else:
-                    world.update(dt)
-
-            # Broadcast snapshot every N frames
-            if self._net_host and frame_counter % NET_SNAPSHOT_INTERVAL == 0:
-                self._net_host.broadcast_snapshot(snapshot_from_world(world))
-
-            # Render
-            self.renderer.draw(
-                world, mode, self.paused, tools=self.tools,
-                show_toolbar=show_toolbar,
-                fast_forward=self.fast_forward_multiplier if self.fast_forward else 0,
-                debug=self.debug_mode,
-            )
-            self.renderer.draw_creature_stats(world, mode)
-            if self.show_evolution_panel:
-                self.renderer.draw_evolution_panel(world, mode, self.generation_history)
-            if self.tools.active_tool != "none":
-                self.renderer.draw_tool_cursor(self.tools)
-            self.settings_panel.draw(self.screen, self.settings, dt)
-            pygame.display.flip()
-
-        return ("done", frame_counter)
 
     # ── Host Mode (Freeplay) ─────────────────────────────────
 
     def _run_host_freeplay(self) -> None:
         """Run freeplay mode as network host."""
         self.tools = PlayerTools()
-        # Per-diet initial populations
+        # Per-species initial populations
         dna_list = []
-        for diet in (DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER):
-            ds = self.settings.diet_settings(diet)
-            for _ in range(ds.freeplay_initial_population):
-                dna_list.append(DNA.random_for_diet(diet))
+        for sp in self.settings.species_registry.all():
+            for _ in range(sp.settings.freeplay_initial_population):
+                dna_list.append(DNA.random_for_species(sp.id))
         world = self._create_world(dna_list)
         world.freeplay = True
         world.generation = 0
@@ -1366,7 +654,7 @@ class Simulation:
         # Send full state to any already-connected clients
         if self._net_host:
             self._net_host.broadcast_full_state(
-                full_state_from_world(world, self.settings, self.tools, "freeplay", 0)
+                full_state_from_world(world, self.settings, self.tools, 0)
             )
 
         while self.running:
@@ -1388,7 +676,7 @@ class Simulation:
                     self._handle_resize(event.w, event.h)
                     continue
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_s:
-                    self.settings_panel.toggle()
+                    self.settings_panel.toggle(self.settings)
                     continue
                 if self.settings_panel.visible:
                     self.settings = self.settings_panel.handle_event(event, self.settings)
@@ -1417,7 +705,7 @@ class Simulation:
                             self.settings_panel.visible = False
                         else:
                             pause_result, self.settings = self.menu.show_pause_menu(
-                                "freeplay", self.settings,
+                                self.settings,
                             )
                             if pause_result == "resume":
                                 self.paused = False
@@ -1438,9 +726,24 @@ class Simulation:
                                     freeplay_state=freeplay_state, tools=self.tools,
                                 )
                                 return
+                            elif pause_result.startswith("import_species:"):
+                                imported_id = pause_result.split(":", 1)[1]
+                                sp = self.settings.species_registry.get(imported_id)
+                                if sp and hasattr(sp, "_imported_dna"):
+                                    for dna in sp._imported_dna:
+                                        x = random.uniform(50, self.settings.world_width - 50)
+                                        y = random.uniform(50, self.settings.world_height - 50)
+                                        child = Creature(dna, x, y, species=sp)
+                                        child.energy = sp.settings.freeplay_child_energy
+                                        world.creatures.append(child)
+                                    del sp._imported_dna
+                                self.paused = False
                             elif pause_result == "restart":
                                 self.tools.reset()
-                                dna_list = [DNA.random() for _ in range(pop)]
+                                dna_list = []
+                                for sp in self.settings.species_registry.all():
+                                    for _ in range(sp.settings.freeplay_initial_population):
+                                        dna_list.append(DNA.random_for_species(sp.id))
                                 world = self._create_world(dna_list)
                                 world.freeplay = True
                                 world.generation = 0
@@ -1539,57 +842,59 @@ class Simulation:
                 if alive > self._freeplay_peak_pop:
                     self._freeplay_peak_pop = alive
 
-            # Per-diet extinction handling
+            # Per-species extinction handling
             if not self.paused:
                 from pangea.settings import (
                     EXTINCTION_RESPAWN_BEST,
                     EXTINCTION_RESPAWN_RANDOM,
                 )
-                for diet in (DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER):
-                    if world.alive_count_by_diet(diet) > 0:
+                for sp in self.settings.species_registry.all():
+                    if world.alive_count_by_species(sp.id) > 0:
                         continue
-                    ds = self.settings.diet_settings(diet)
-                    if ds.extinction_mode == EXTINCTION_RESPAWN_BEST:
-                        diet_creatures = [
-                            c for c in world.creatures if c.dna.diet == diet
+                    if not sp.enabled:
+                        continue
+                    ss = sp.settings
+                    if ss.extinction_mode == EXTINCTION_RESPAWN_BEST:
+                        sp_creatures = [
+                            c for c in world.creatures if c.dna.species_id == sp.id
                         ]
                         top_dna = select_top(
-                            diet_creatures,
-                            min(ds.top_performers_count, len(diet_creatures)),
+                            sp_creatures,
+                            min(ss.top_performers_count, len(sp_creatures)),
                             self.settings,
                         )
-                        respawn_count = ds.freeplay_initial_population
+                        respawn_count = ss.freeplay_initial_population
                         if top_dna:
                             new_dna = create_next_generation(
                                 top_dna,
                                 population_size=respawn_count,
-                                mutation_rate=ds.mutation_rate,
-                                mutation_strength=ds.mutation_strength,
-                                crossover_rate=ds.crossover_rate,
-                                min_parents=ds.min_population,
-                                weight_clamp=ds.weight_clamp,
-                                trait_mutation_range=ds.trait_mutation_range,
+                                mutation_rate=ss.mutation_rate,
+                                mutation_strength=ss.mutation_strength,
+                                crossover_rate=ss.crossover_rate,
+                                min_parents=ss.min_population,
+                                weight_clamp=ss.weight_clamp,
+                                trait_mutation_range=ss.trait_mutation_range,
                             )
                         else:
                             new_dna = [
-                                DNA.random_for_diet(diet)
+                                DNA.random_for_species(sp.id)
                                 for _ in range(respawn_count)
                             ]
                         for dna in new_dna:
-                            dna.diet = diet
+                            dna.species_id = sp.id
                             x = random.uniform(50, self.settings.world_width - 50)
                             y = random.uniform(50, self.settings.world_height - 50)
-                            child = Creature(dna, x, y)
-                            child.energy = ds.freeplay_child_energy
+                            child = Creature(dna, x, y, species=sp)
+                            child.energy = ss.freeplay_child_energy
                             world.creatures.append(child)
-                    elif ds.extinction_mode == EXTINCTION_RESPAWN_RANDOM:
-                        respawn_count = max(1, ds.freeplay_initial_population // 2)
+                    elif ss.extinction_mode == EXTINCTION_RESPAWN_RANDOM:
+                        respawn_count = max(1, ss.freeplay_initial_population // 2)
                         for _ in range(respawn_count):
-                            dna = DNA.random_for_diet(diet)
+                            dna = DNA.random_for_species(sp.id)
                             x = random.uniform(50, self.settings.world_width - 50)
                             y = random.uniform(50, self.settings.world_height - 50)
-                            child = Creature(dna, x, y)
-                            child.energy = ds.freeplay_child_energy
+                            child = Creature(dna, x, y, species=sp)
+                            child.energy = ss.freeplay_child_energy
                             world.creatures.append(child)
 
                 if world.alive_count() == 0:
@@ -1601,14 +906,14 @@ class Simulation:
 
             # Render
             self.renderer.draw(
-                world, "freeplay", self.paused, tools=self.tools,
+                world, self.paused, tools=self.tools,
                 show_toolbar=True,
                 fast_forward=self.fast_forward_multiplier if self.fast_forward else 0,
                 debug=self.debug_mode,
             )
-            self.renderer.draw_creature_stats(world, "freeplay")
+            self.renderer.draw_creature_stats(world)
             if self.show_evolution_panel:
-                self.renderer.draw_evolution_panel(world, "freeplay", self._freeplay_history)
+                self.renderer.draw_evolution_panel(world, self._freeplay_history)
             if self.tools.active_tool != "none":
                 self.renderer.draw_tool_cursor(self.tools)
             self.settings_panel.draw(self.screen, self.settings, dt)
@@ -1622,7 +927,6 @@ class Simulation:
 
         # Wait for full state from host (no timeout — host may still be in waiting room)
         world = None
-        mode = "isolation"
         generation = 1
 
         while world is None:
@@ -1637,7 +941,7 @@ class Simulation:
 
             for msg in self._net_client.poll_incoming():
                 if msg.get("t") == MsgType.FULL_STATE:
-                    world, self.settings, self.tools, mode, generation, self.generation_history = (
+                    world, self.settings, self.tools, _, generation, self.generation_history = (
                         apply_full_state(msg)
                     )
                     break
@@ -1667,7 +971,7 @@ class Simulation:
                 if msg_type == MsgType.SNAPSHOT:
                     apply_snapshot(world, msg)
                 elif msg_type == MsgType.FULL_STATE:
-                    world, self.settings, self.tools, mode, generation, self.generation_history = (
+                    world, self.settings, self.tools, _, generation, self.generation_history = (
                         apply_full_state(msg)
                     )
                     self._active_world = world
@@ -1747,14 +1051,14 @@ class Simulation:
 
             # Render (no world.update — client is view-only)
             self.renderer.draw(
-                world, mode, False, tools=self.tools,
+                world, False, tools=self.tools,
                 show_toolbar=True,
                 fast_forward=0,
                 debug=self.debug_mode,
             )
-            self.renderer.draw_creature_stats(world, mode)
+            self.renderer.draw_creature_stats(world)
             if self.show_evolution_panel:
-                self.renderer.draw_evolution_panel(world, mode, self.generation_history)
+                self.renderer.draw_evolution_panel(world, self.generation_history)
             if self.tools.active_tool != "none":
                 self.renderer.draw_tool_cursor(self.tools)
             pygame.display.flip()
@@ -1806,27 +1110,27 @@ class Simulation:
         elif msg_type == MsgType.CLIENT_JOINED:
             # Send full state to newly joined client
             if self._net_host:
-                mode = "freeplay" if world.freeplay else "isolation"
                 self._net_host.broadcast_full_state(
                     full_state_from_world(
                         world, self.settings, self.tools,
-                        mode, world.generation, self.generation_history,
+                        world.generation, self.generation_history,
                     )
                 )
 
     # ── Freeplay Snapshot Builder ─────────────────────────────
 
     def _build_freeplay_snapshot(self, world: World) -> dict:
-        """Build a history snapshot with per-diet stats for the evolution panel."""
+        """Build a history snapshot with per-species stats for the evolution panel."""
         alive_creatures = [c for c in world.creatures if c.alive]
         n_alive = len(alive_creatures)
+        registry = self.settings.species_registry
 
-        # Group alive creatures by diet
-        by_diet: dict[int, list] = {0: [], 1: [], 2: []}
+        # Group alive creatures by species
+        by_species: dict[str, list] = {sp.id: [] for sp in registry.all()}
         for c in alive_creatures:
-            by_diet.setdefault(c.dna.diet, []).append(c)
+            by_species.setdefault(c.dna.species_id, []).append(c)
 
-        def _diet_stats(creatures: list) -> dict:
+        def _species_stats(creatures: list) -> dict:
             n = len(creatures)
             if n == 0:
                 return {
@@ -1849,67 +1153,35 @@ class Simulation:
                 "avg_lifespan": sum(c.dna.lifespan for c in creatures) / n,
             }
 
-        return {
+        snapshot = {
             "time": self._freeplay_elapsed,
             "population": n_alive,
             "births": world.total_births,
             "deaths": world.total_deaths,
             "births_per_min": self._freeplay_births_per_min,
             "deaths_per_min": self._freeplay_deaths_per_min,
-            "herbivores": len(by_diet[0]),
-            "carnivores": len(by_diet[1]),
-            "scavengers": len(by_diet[2]),
             "avg_gen": (
                 sum(c.generation for c in alive_creatures) / n_alive
                 if n_alive else 0
             ),
-            # Per-diet detailed stats
-            "herb_stats": _diet_stats(by_diet[0]),
-            "carn_stats": _diet_stats(by_diet[1]),
-            "scav_stats": _diet_stats(by_diet[2]),
         }
+        # Per-species population counts and detailed stats
+        for sp in registry.all():
+            snapshot[sp.id] = len(by_species.get(sp.id, []))
+            snapshot[f"{sp.id}_stats"] = _species_stats(by_species.get(sp.id, []))
+        return snapshot
 
     # ── World Creation Helpers ───────────────────────────────
 
-    def _create_world(self, dna_list: list[DNA], lineage: str = "") -> World:
+    def _create_world(self, dna_list: list[DNA]) -> World:
         """Create a World with creatures from a list of DNA."""
+        registry = self.settings.species_registry
         creatures = []
         for dna in dna_list:
             x = random.uniform(50, self.settings.world_width - 50)
             y = random.uniform(50, self.settings.world_height - 50)
-            creatures.append(Creature(dna, x, y, lineage=lineage))
+            sp = registry.get(dna.species_id)
+            creatures.append(Creature(dna, x, y, species=sp))
         world = World(creatures, settings=self.settings, tools=self.tools)
-        self._active_world = world
-        return world
-
-    def _create_convergence_world(
-        self, dna_a: list[DNA], dna_b: list[DNA],
-    ) -> World:
-        """Create a World with two lineages for convergence mode."""
-        creatures = []
-
-        for dna in dna_a[:CREATURES_PER_LINEAGE]:
-            x = random.uniform(50, self.settings.world_width - 50)
-            y = random.uniform(50, self.settings.world_height - 50)
-            creatures.append(Creature(dna, x, y, lineage="A"))
-
-        for dna in dna_b[:CREATURES_PER_LINEAGE]:
-            x = random.uniform(50, self.settings.world_width - 50)
-            y = random.uniform(50, self.settings.world_height - 50)
-            creatures.append(Creature(dna, x, y, lineage="B"))
-
-        while len([c for c in creatures if c.lineage == "A"]) < CREATURES_PER_LINEAGE:
-            src = random.choice([c for c in creatures if c.lineage == "A"])
-            x = random.uniform(50, self.settings.world_width - 50)
-            y = random.uniform(50, self.settings.world_height - 50)
-            creatures.append(Creature(src.dna, x, y, lineage="A"))
-
-        while len([c for c in creatures if c.lineage == "B"]) < CREATURES_PER_LINEAGE:
-            src = random.choice([c for c in creatures if c.lineage == "B"])
-            x = random.uniform(50, self.settings.world_width - 50)
-            y = random.uniform(50, self.settings.world_height - 50)
-            creatures.append(Creature(src.dna, x, y, lineage="B"))
-
-        world = World(creatures, settings=self.settings)
         self._active_world = world
         return world

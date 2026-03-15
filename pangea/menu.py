@@ -1,8 +1,7 @@
 """
-Menu — pygame menu screens for mode selection, settings, and file picking.
+Menu — pygame menu screens for settings and game management.
 ============================================================
-Provides the main menu, in-app settings panel, file selection for
-convergence mode, and the pause overlay.
+Provides the main menu, in-app settings panel, and the pause overlay.
 """
 
 from __future__ import annotations
@@ -19,8 +18,16 @@ from pangea.config import (
     COLOR_MENU_BG,
 )
 import pangea.config as config
-from pangea.save_load import delete_save, list_saves
+from pangea.save_load import delete_save, list_saves, list_species_files
 from pangea.settings import SETTING_DEFS, SimSettings
+from pangea.species import (
+    Species,
+    SpeciesSettings,
+    SpeciesRegistry,
+    default_herbivore,
+    default_carnivore,
+    default_scavenger,
+)
 
 
 class Button:
@@ -103,19 +110,15 @@ class Menu:
         btn_w, btn_h = 280, 50
         start_y = cy - 130
         return {
-            "isolation": Button(cx - btn_w // 2, start_y, btn_w, btn_h, "Isolation Mode",
-                                color=(40, 70, 50), hover_color=(55, 100, 65)),
-            "convergence": Button(cx - btn_w // 2, start_y + 70, btn_w, btn_h, "Convergence Mode",
-                                  color=(50, 45, 75), hover_color=(70, 60, 110)),
-            "freeplay": Button(cx - btn_w // 2, start_y + 140, btn_w, btn_h, "Freeplay Mode",
-                               color=(60, 55, 40), hover_color=(90, 80, 55)),
-            "host": Button(cx - btn_w // 2, start_y + 210, btn_w, btn_h, "Host Game",
+            "freeplay": Button(cx - btn_w // 2, start_y, btn_w, btn_h, "Play",
+                               color=(40, 70, 50), hover_color=(55, 100, 65)),
+            "host": Button(cx - btn_w // 2, start_y + 70, btn_w, btn_h, "Host Game",
                            color=(45, 65, 75), hover_color=(60, 90, 105)),
-            "join": Button(cx - btn_w // 2, start_y + 280, btn_w, btn_h, "Join Game",
+            "join": Button(cx - btn_w // 2, start_y + 140, btn_w, btn_h, "Join Game",
                            color=(55, 50, 70), hover_color=(75, 70, 100)),
-            "settings": Button(cx - btn_w // 2, start_y + 350, btn_w, btn_h, "Settings",
+            "settings": Button(cx - btn_w // 2, start_y + 210, btn_w, btn_h, "Settings",
                                color=(55, 55, 65), hover_color=(75, 75, 90)),
-            "quit": Button(cx - btn_w // 2, start_y + 420, btn_w, btn_h, "Quit",
+            "quit": Button(cx - btn_w // 2, start_y + 280, btn_w, btn_h, "Quit",
                            color=(65, 40, 40), hover_color=(90, 50, 50)),
         }
 
@@ -185,15 +188,11 @@ class Menu:
             pygame.display.flip()
             clock.tick(30)
 
-    # ── Mode Select (New / Load Save) ───────────────────────
+    # ── New / Load Save ─────────────────────────────────────
 
-    def _mode_display_name(self, mode: str) -> str:
-        """Return a human-readable title for a game mode."""
-        return {"isolation": "Isolation Mode", "convergence": "Convergence Mode", "freeplay": "Freeplay Mode"}.get(mode, mode.title())
-
-    def show_mode_select(self, mode: str) -> str | dict | None:
+    def show_mode_select(self) -> str | dict | None:
         """
-        Show New Game / Load Save screen for a game mode.
+        Show New Game / Load Save screen.
 
         Returns:
             "new"  — start a new game
@@ -205,7 +204,7 @@ class Menu:
 
         while True:
             # Refresh save list each loop iteration (in case of deletion)
-            saves = list_saves(mode)
+            saves = list_saves()
 
             # Build buttons
             cx = config.WINDOW_WIDTH // 2
@@ -280,7 +279,7 @@ class Menu:
                 self._draw_menu_bg(frame)
 
                 # Title
-                title_text = self._mode_display_name(mode)
+                title_text = "Freeplay"
                 title = self.font_heading.render(title_text, True, (140, 170, 220))
                 self.surface.blit(title, title.get_rect(center=(cx, list_top - 140)))
 
@@ -665,186 +664,573 @@ class Menu:
             pygame.display.flip()
             clock.tick(30)
 
-    def show_file_select(self, species_dir: str = "species") -> tuple[str, str] | None:
+    # ── Species Editor ─────────────────────────────────────────
+
+    # Species slider definitions: (attr_name, label, min, max, step, fmt, target, tooltip)
+    # target: "sp" = Species attribute, "ss" = SpeciesSettings attribute
+    _SP_SLIDERS = [
+        # Diet tuning
+        ("plant_food_multiplier", "Plant Multiplier", 0.1, 3.0, 0.1, ".1f", "sp",
+         "Energy multiplier when eating plants. Higher = more energy per plant."),
+        ("attack_damage", "Attack Damage", 0.5, 10.0, 0.5, ".1f", "sp",
+         "Damage dealt per attack hit against other creatures."),
+        ("energy_steal_fraction", "Energy Steal %", 0.0, 1.0, 0.05, ".2f", "sp",
+         "Fraction of damage that is converted into energy for the attacker."),
+        ("scavenge_death_radius", "Scavenge Radius", 10, 200, 10, ".0f", "sp",
+         "How close a creature must be to a corpse to scavenge energy from it."),
+        ("scavenge_death_energy", "Scavenge Energy", 0, 30, 1, ".0f", "sp",
+         "Energy gained when a nearby creature dies within scavenge radius."),
+        # Population
+        ("freeplay_initial_population", "Initial Pop", 1, 100, 1, ".0f", "ss",
+         "Number of creatures spawned at the start of a new simulation."),
+        ("freeplay_carrying_capacity", "Carry Capacity", 5, 200, 5, ".0f", "ss",
+         "Target population. Breeding slows as population approaches this limit."),
+        ("freeplay_hard_cap", "Hard Cap", 10, 300, 5, ".0f", "ss",
+         "Absolute maximum population. No new births allowed above this number."),
+        # Mutation
+        ("mutation_rate", "Mutation Rate", 0.01, 1.0, 0.05, ".2f", "ss",
+         "Probability that each neural network weight mutates during reproduction."),
+        ("mutation_strength", "Mutation Str.", 0.05, 2.0, 0.05, ".2f", "ss",
+         "How much each mutated weight can change. Higher = more dramatic mutations."),
+        ("crossover_rate", "Crossover Rate", 0.0, 1.0, 0.05, ".2f", "ss",
+         "Chance of mixing genes from two parents instead of cloning one parent."),
+        ("trait_mutation_range", "Trait Mut Range", 0, 20, 1, ".0f", "ss",
+         "Max points a genetic trait (size, speed, sense) can shift per generation."),
+        # Breeding
+        ("freeplay_breed_min_age", "Breed Min Age", 1, 30, 1, ".0f", "ss",
+         "Minimum age (in seconds) before a creature is old enough to breed."),
+        ("freeplay_breed_min_food", "Breed Min Food", 1, 20, 1, ".0f", "ss",
+         "Number of food items a creature must have eaten before it can breed."),
+        ("freeplay_breed_energy_threshold", "Breed Energy %", 0.1, 1.0, 0.05, ".2f", "ss",
+         "Minimum energy level (as fraction of max) required to breed."),
+        ("freeplay_breed_cooldown", "Breed Cooldown", 1, 60, 1, ".0f", "ss",
+         "Seconds a creature must wait after breeding before it can breed again."),
+        ("freeplay_breed_energy_cost", "Breed Cost", 5, 100, 5, ".0f", "ss",
+         "Energy spent by the parent when producing an offspring."),
+        ("freeplay_child_energy", "Child Energy", 10, 200, 10, ".0f", "ss",
+         "Starting energy given to a newborn creature."),
+    ]
+
+    # Tooltip descriptions for diet flag toggles
+    _DIET_FLAG_TOOLTIPS = {
+        "can_eat_plants": "Whether this species can eat plant food items for energy.",
+        "can_attack_other_species": "Whether this species can attack creatures of different species.",
+        "can_attack_own_species": "Whether this species can attack creatures of the same species.",
+        "can_eat_other_corpse": "Whether this species can eat corpses of other species for energy.",
+        "can_eat_own_corpse": "Whether this species can eat corpses of its own species for energy.",
+    }
+
+    _EXTINCTION_TOOLTIP = "What happens when this species goes extinct. Respawn Best: revive from top DNA. Respawn Random: revive with random DNA. Permanent: species is gone forever."
+
+    SPECIES_DIR = "species_settings"
+
+    def _species_card_height(self) -> int:
+        """Height of a single species card in the editor."""
+        # Header(30) + action row(28) + diet flags(3 rows * 28) + sliders(len * 22) + padding
+        return 30 + 28 + 84 + len(self._SP_SLIDERS) * 22 + 16
+
+    def show_species_editor(self, settings: SimSettings) -> SimSettings:
         """
-        Show file selection screen for convergence mode.
-        Left-click to select, right-click to delete, F2 or double-click name to rename.
+        Full-screen species editor for creating, editing, and removing species.
 
-        Returns:
-            Tuple of (file_a_path, file_b_path) or None if cancelled.
+        Shows all species in a scrollable list with diet flags, combat/scavenge
+        tuning, population, mutation, breeding, and extinction settings.
         """
-        import os
-
-        species_path = Path(species_dir)
-        if not species_path.exists():
-            species_path.mkdir(parents=True, exist_ok=True)
-
-        files = sorted(str(f.name) for f in species_path.glob("*.json"))
-
-        if len(files) < 2:
-            return self._show_message(
-                "Need at least 2 species files in the 'species/' folder.",
-                "Save species in Isolation Mode first!",
-                "Press ESC to go back.",
-            )
-
-        names = self._load_species_names(species_path, files)
-        selected: list[int] = []
-        scroll_offset = 0
-        max_visible = 12
-        hovered_idx = -1
-
         clock = pygame.time.Clock()
+        registry = settings.species_registry
+        scroll_y = 0
+        dragging_slider: tuple | None = None  # (species_id, attr, target, min, max, step)
+        hovered_tooltip = ""
+
+        palette = [
+            (80, 200, 80), (200, 60, 60), (180, 140, 50),
+            (60, 140, 220), (200, 100, 200), (100, 200, 200),
+            (220, 160, 60), (140, 200, 100), (200, 80, 140),
+        ]
+
+        card_h = self._species_card_height()
 
         while True:
             mouse_pos = pygame.mouse.get_pos()
-            cx = config.WINDOW_WIDTH // 2
-            cy = config.WINDOW_HEIGHT // 2
-            list_top = cy - 170
-            start_y = cy + 260
-
-            # Track which item is hovered
-            hovered_idx = -1
-            for i in range(min(max_visible, len(files) - scroll_offset)):
-                idx = i + scroll_offset
-                item_rect = pygame.Rect(cx - 200, list_top + i * 35, 400, 30)
-                if item_rect.collidepoint(mouse_pos):
-                    hovered_idx = idx
+            species_list = registry.all()
 
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    return None
+                    return settings
                 if self._handle_window_event(event):
                     continue
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
-                        return None
-                    # F2 to rename hovered item
-                    if event.key == pygame.K_F2 and hovered_idx >= 0:
-                        fname = files[hovered_idx]
-                        old_name = names[fname].split("  (")[0]
-                        new_name = self._show_text_input("Rename Species", old_name)
-                        if new_name:
-                            self._rename_species(species_path / fname, new_name)
-                            names = self._load_species_names(species_path, files)
+                        return settings
+                if event.type == pygame.MOUSEWHEEL:
+                    scroll_y = max(0, scroll_y - event.y * 30)
 
-                # Right-click to delete
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
-                    for i in range(min(max_visible, len(files) - scroll_offset)):
-                        idx = i + scroll_offset
-                        item_rect = pygame.Rect(cx - 200, list_top + i * 35, 400, 30)
-                        if item_rect.collidepoint(mouse_pos):
-                            fname = files[idx]
-                            display = names[fname].split("  (")[0]
-                            if self._show_confirm(
-                                f"Delete '{display}'?",
-                                "This cannot be undone.",
-                            ):
-                                os.remove(species_path / fname)
-                                # Remove from selection
-                                selected = [s for s in selected if s != idx]
-                                selected = [s - 1 if s > idx else s for s in selected]
-                                # Refresh file list
-                                files = sorted(str(f.name) for f in species_path.glob("*.json"))
-                                names = self._load_species_names(species_path, files)
-                                scroll_offset = max(0, min(scroll_offset, len(files) - max_visible))
-                                if len(files) < 2:
-                                    return self._show_message(
-                                        "Need at least 2 species files.",
-                                        "Save species in Isolation Mode first!",
-                                        "Press ESC to go back.",
-                                    )
-                            break
+                if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                    dragging_slider = None
 
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    for i in range(min(max_visible, len(files) - scroll_offset)):
-                        idx = i + scroll_offset
-                        item_rect = pygame.Rect(cx - 200, list_top + i * 35, 400, 30)
-                        if item_rect.collidepoint(mouse_pos):
-                            if idx in selected:
-                                selected.remove(idx)
-                            elif len(selected) < 2:
-                                selected.append(idx)
+                    mx, my = mouse_pos
 
-                    if len(selected) == 2:
-                        start_rect = pygame.Rect(cx - 100, start_y, 200, 45)
-                        if start_rect.collidepoint(mouse_pos):
-                            file_a = str(species_path / files[selected[0]])
-                            file_b = str(species_path / files[selected[1]])
-                            return (file_a, file_b)
+                    # Back button
+                    back_rect = pygame.Rect(20, config.WINDOW_HEIGHT - 50, 100, 36)
+                    if back_rect.collidepoint(mx, my):
+                        return settings
 
-                if event.type == pygame.MOUSEWHEEL:
-                    scroll_offset = max(0, min(len(files) - max_visible, scroll_offset - event.y))
+                    # Add Species button
+                    add_rect = pygame.Rect(config.WINDOW_WIDTH - 180, config.WINDOW_HEIGHT - 50, 160, 36)
+                    if add_rect.collidepoint(mx, my):
+                        name = self._show_text_input("Species Name:", "New Species")
+                        if name:
+                            slug = name.lower().replace(" ", "_")
+                            uid = registry.generate_unique_id(slug)
+                            color = palette[len(species_list) % len(palette)]
+                            new_sp = Species(
+                                id=uid, name=name, color=color,
+                                settings=SpeciesSettings(),
+                            )
+                            registry.register(new_sp)
+                        continue
 
+                    # Check per-species card interactions
+                    card_x = 30
+                    card_w = config.WINDOW_WIDTH - 60
+                    y_pos = 70 - scroll_y
+                    for i, sp in enumerate(species_list):
+                        if y_pos + card_h < 0 or y_pos > config.WINDOW_HEIGHT:
+                            y_pos += card_h + 12
+                            continue
+
+                        # Delete button
+                        del_rect = pygame.Rect(card_x + card_w - 70, y_pos + 6, 60, 22)
+                        if del_rect.collidepoint(mx, my) and len(species_list) > 1:
+                            if self._show_confirm(f"Delete {sp.name}?", "Creatures of this species will be removed."):
+                                registry.remove(sp.id)
+                            break
+
+                        # Rename button
+                        rename_rect = pygame.Rect(card_x + card_w - 140, y_pos + 6, 60, 22)
+                        if rename_rect.collidepoint(mx, my):
+                            new_name = self._show_text_input("Rename Species:", sp.name)
+                            if new_name:
+                                sp.name = new_name
+                            break
+
+                        # Enabled toggle
+                        enabled_rect = pygame.Rect(card_x + 16, y_pos + 30, 50, 20)
+                        if enabled_rect.collidepoint(mx, my):
+                            sp.enabled = not sp.enabled
+                            break
+
+                        # Save species settings button
+                        save_sp_rect = pygame.Rect(card_x + card_w - 220, y_pos + 30, 60, 22)
+                        if save_sp_rect.collidepoint(mx, my):
+                            self._save_species_settings(sp)
+                            break
+
+                        # Load species settings button
+                        load_sp_rect = pygame.Rect(card_x + card_w - 150, y_pos + 30, 60, 22)
+                        if load_sp_rect.collidepoint(mx, my):
+                            self._load_species_settings(sp)
+                            break
+
+                        # Diet flag toggles
+                        toggle_y = y_pos + 58
+                        toggle_x_l = card_x + 20
+                        toggle_x_r = card_x + card_w // 2 + 10
+                        tw = 50
+                        diet_flags = [
+                            ("can_eat_plants", toggle_x_l, toggle_y),
+                            ("can_attack_other_species", toggle_x_r, toggle_y),
+                            ("can_attack_own_species", toggle_x_l, toggle_y + 28),
+                            ("can_eat_other_corpse", toggle_x_r, toggle_y + 28),
+                            ("can_eat_own_corpse", toggle_x_l, toggle_y + 56),
+                        ]
+                        toggled = False
+                        for flag_name, fx, fy in diet_flags:
+                            tr = pygame.Rect(fx + 160, fy, tw, 20)
+                            if tr.collidepoint(mx, my):
+                                setattr(sp, flag_name, not getattr(sp, flag_name))
+                                toggled = True
+                                break
+                        if toggled:
+                            break
+
+                        # Extinction mode toggle (cycle on click)
+                        ext_y = toggle_y + 56
+                        ext_rect = pygame.Rect(toggle_x_r + 160, ext_y, 120, 20)
+                        if ext_rect.collidepoint(mx, my):
+                            from pangea.species import EXTINCTION_MODES
+                            try:
+                                idx = EXTINCTION_MODES.index(sp.settings.extinction_mode)
+                            except ValueError:
+                                idx = 0
+                            sp.settings.extinction_mode = EXTINCTION_MODES[(idx + 1) % len(EXTINCTION_MODES)]
+                            break
+
+                        # Sliders
+                        slider_base_y = toggle_y + 84
+                        slider_x = card_x + 170
+                        slider_w = card_w - 250
+                        clicked_slider = False
+                        for si, (attr, label, smin, smax, step, fmt, target, _tip) in enumerate(self._SP_SLIDERS):
+                            sy = slider_base_y + si * 22
+                            sr = pygame.Rect(slider_x, sy, slider_w, 14)
+                            if sr.collidepoint(mx, my):
+                                dragging_slider = (sp.id, attr, target, smin, smax, step)
+                                clicked_slider = True
+                                break
+                        if clicked_slider:
+                            break
+
+                        y_pos += card_h + 12
+
+            # Handle slider dragging
+            if dragging_slider is not None:
+                sp_id, attr, target, smin, smax, step = dragging_slider
+                sp = registry.get(sp_id)
+                if sp:
+                    card_x = 30
+                    card_w = config.WINDOW_WIDTH - 60
+                    slider_x = card_x + 170
+                    slider_w = card_w - 250
+                    t = max(0.0, min(1.0, (mouse_pos[0] - slider_x) / slider_w))
+                    raw = smin + t * (smax - smin)
+                    snapped = round(raw / step) * step
+                    snapped = max(smin, min(smax, snapped))
+                    if step >= 1:
+                        snapped = int(snapped)
+                    obj = sp if target == "sp" else sp.settings
+                    setattr(obj, attr, snapped)
+
+            # ── Draw ──
             self.surface.fill(COLOR_MENU_BG)
 
-            title = self.font.render("Select 2 Species Files", True, COLOR_HUD_TEXT)
-            self.surface.blit(title, title.get_rect(center=(cx, list_top - 70)))
-
-            hint = self.font_subtitle.render(
-                "Left-click: select  |  Right-click: delete  |  F2: rename",
-                True, (120, 120, 150),
+            title = self.font_heading.render("SPECIES EDITOR", True, (180, 190, 220))
+            self.surface.blit(title, (30, 20))
+            hint = self.font_small.render(
+                f"{len(species_list)} species  |  ESC to go back", True, (100, 105, 130),
             )
-            self.surface.blit(hint, hint.get_rect(center=(cx, list_top - 35)))
+            self.surface.blit(hint, (30, 44))
 
-            for i in range(min(max_visible, len(files) - scroll_offset)):
-                idx = i + scroll_offset
-                item_rect = pygame.Rect(cx - 200, list_top + i * 35, 400, 30)
+            card_x = 30
+            card_w = config.WINDOW_WIDTH - 60
+            y_pos = 70 - scroll_y
+            clip_rect = pygame.Rect(0, 60, config.WINDOW_WIDTH, config.WINDOW_HEIGHT - 120)
+            self.surface.set_clip(clip_rect)
 
-                if idx in selected:
-                    sel_idx = selected.index(idx)
-                    color = (100, 40, 40) if sel_idx == 0 else (40, 50, 100)
-                    label = " [A]" if sel_idx == 0 else " [B]"
-                else:
-                    color = (35, 38, 52)
-                    label = ""
+            hovered_tooltip = ""
 
-                hovered = item_rect.collidepoint(mouse_pos)
-                if hovered:
-                    color = tuple(min(255, c + 20) for c in color)
+            for i, sp in enumerate(species_list):
+                if y_pos + card_h < 60 or y_pos > config.WINDOW_HEIGHT - 60:
+                    y_pos += card_h + 12
+                    continue
 
-                pygame.draw.rect(self.surface, color, item_rect, border_radius=4)
-                pygame.draw.rect(self.surface, (60, 65, 80), item_rect, 1, border_radius=4)
+                # Card background
+                cr = pygame.Rect(card_x, y_pos, card_w, card_h)
+                pygame.draw.rect(self.surface, (25, 28, 40), cr, border_radius=6)
+                pygame.draw.rect(self.surface, (50, 55, 70), cr, 1, border_radius=6)
+                pygame.draw.rect(self.surface, sp.color, (card_x, y_pos, 6, card_h), border_radius=3)
 
-                display_name = names.get(files[idx], files[idx])
-                text = self.font_subtitle.render(display_name + label, True, COLOR_HUD_TEXT)
-                self.surface.blit(text, (item_rect.x + 10, item_rect.y + 7))
+                # Header
+                ns = self.font_heading.render(sp.name, True, sp.color)
+                self.surface.blit(ns, (card_x + 16, y_pos + 6))
+                ids = self.font_small.render(f"({sp.id})", True, (90, 95, 115))
+                self.surface.blit(ids, (card_x + 18 + ns.get_width() + 6, y_pos + 10))
 
-            if len(selected) == 2:
-                start_rect = pygame.Rect(cx - 100, start_y, 200, 45)
-                start_hovered = start_rect.collidepoint(mouse_pos)
-                start_color = (60, 90, 140) if start_hovered else (45, 65, 105)
-                pygame.draw.rect(self.surface, start_color, start_rect, border_radius=6)
-                start_text = self.font.render("Start Battle!", True, COLOR_BUTTON_TEXT)
-                self.surface.blit(start_text, start_text.get_rect(center=start_rect.center))
+                # Rename/Delete buttons
+                rename_rect = pygame.Rect(card_x + card_w - 140, y_pos + 6, 60, 22)
+                rh = rename_rect.collidepoint(mouse_pos)
+                pygame.draw.rect(self.surface, (50, 55, 75) if rh else (35, 38, 52), rename_rect, border_radius=4)
+                self.surface.blit(self.font_small.render("Rename", True, (160, 165, 185)),
+                                  self.font_small.render("Rename", True, (160, 165, 185)).get_rect(center=rename_rect.center))
+                if rh:
+                    hovered_tooltip = "Change the display name of this species."
+                if len(species_list) > 1:
+                    del_rect = pygame.Rect(card_x + card_w - 70, y_pos + 6, 60, 22)
+                    dh = del_rect.collidepoint(mouse_pos)
+                    pygame.draw.rect(self.surface, (90, 40, 40) if dh else (60, 35, 35), del_rect, border_radius=4)
+                    self.surface.blit(self.font_small.render("Delete", True, (200, 140, 140)),
+                                      self.font_small.render("Delete", True, (200, 140, 140)).get_rect(center=del_rect.center))
+                    if dh:
+                        hovered_tooltip = "Remove this species and all its creatures from the simulation."
+
+                # Enabled toggle + Save/Load buttons row
+                action_y = y_pos + 30
+                self.surface.blit(self.font_small.render("Enabled", True, (150, 155, 175)), (card_x + 76, action_y + 2))
+                self._draw_toggle(card_x + 16, action_y, sp.enabled)
+                enabled_area = pygame.Rect(card_x + 16, action_y, 130, 20)
+                if enabled_area.collidepoint(mouse_pos):
+                    hovered_tooltip = "Pause this species: no new births and no extinction respawn while disabled."
+
+                # Dimmed overlay hint when disabled
+                if not sp.enabled:
+                    dim_label = self.font_small.render("(paused)", True, (200, 130, 130))
+                    self.surface.blit(dim_label, (card_x + 160, action_y + 2))
+
+                # Save/Load species settings buttons
+                save_sp_rect = pygame.Rect(card_x + card_w - 220, action_y, 60, 22)
+                sh = save_sp_rect.collidepoint(mouse_pos)
+                pygame.draw.rect(self.surface, (40, 65, 50) if sh else (30, 50, 38), save_sp_rect, border_radius=4)
+                self.surface.blit(self.font_small.render("Save", True, (140, 200, 160)),
+                                  self.font_small.render("Save", True, (140, 200, 160)).get_rect(center=save_sp_rect.center))
+                if sh:
+                    hovered_tooltip = "Save this species' settings to a file."
+
+                load_sp_rect = pygame.Rect(card_x + card_w - 150, action_y, 60, 22)
+                lh = load_sp_rect.collidepoint(mouse_pos)
+                pygame.draw.rect(self.surface, (45, 50, 70) if lh else (35, 40, 55), load_sp_rect, border_radius=4)
+                self.surface.blit(self.font_small.render("Load", True, (160, 175, 210)),
+                                  self.font_small.render("Load", True, (160, 175, 210)).get_rect(center=load_sp_rect.center))
+                if lh:
+                    hovered_tooltip = "Load species settings from a file."
+
+                # Diet flag toggles
+                toggle_y = y_pos + 58
+                tx_l = card_x + 20
+                tx_r = card_x + card_w // 2 + 10
+                diet_flags = [
+                    ("can_eat_plants", "Eat Plants", tx_l, toggle_y),
+                    ("can_attack_other_species", "Attack Others", tx_r, toggle_y),
+                    ("can_attack_own_species", "Attack Own", tx_l, toggle_y + 28),
+                    ("can_eat_other_corpse", "Eat Other Corpse", tx_r, toggle_y + 28),
+                    ("can_eat_own_corpse", "Eat Own Corpse", tx_l, toggle_y + 56),
+                ]
+                for flag_name, flag_label, fx, fy in diet_flags:
+                    val = getattr(sp, flag_name)
+                    label_surf = self.font_small.render(flag_label, True, (150, 155, 175))
+                    self.surface.blit(label_surf, (fx, fy + 2))
+                    self._draw_toggle(fx + 160, fy, val)
+                    # Hover detection on label + toggle area
+                    flag_area = pygame.Rect(fx, fy, 160 + 50, 20)
+                    if flag_area.collidepoint(mouse_pos):
+                        hovered_tooltip = self._DIET_FLAG_TOOLTIPS.get(flag_name, "")
+
+                # Extinction mode (clickable cycle)
+                ext_y = toggle_y + 56
+                self.surface.blit(self.font_small.render("Extinction", True, (150, 155, 175)), (tx_r, ext_y + 2))
+                ext_display = sp.settings.extinction_mode.replace("_", " ").title()
+                ext_rect = pygame.Rect(tx_r + 160, ext_y, 120, 20)
+                eh = ext_rect.collidepoint(mouse_pos)
+                pygame.draw.rect(self.surface, (40, 45, 60) if eh else (30, 33, 45), ext_rect, border_radius=4)
+                et = self.font_small.render(f"< {ext_display} >", True, (140, 200, 170))
+                self.surface.blit(et, et.get_rect(center=ext_rect.center))
+                # Hover on extinction label or selector
+                ext_full = pygame.Rect(tx_r, ext_y, 160 + 120, 20)
+                if ext_full.collidepoint(mouse_pos):
+                    hovered_tooltip = self._EXTINCTION_TOOLTIP
+
+                # Sliders
+                slider_base_y = toggle_y + 84
+                slider_x = card_x + 170
+                slider_w = card_w - 250
+
+                for si, (attr, label, smin, smax, step, fmt, target, tip) in enumerate(self._SP_SLIDERS):
+                    sy = slider_base_y + si * 22
+                    obj = sp if target == "sp" else sp.settings
+                    val = getattr(obj, attr)
+                    t = max(0, min(1, (val - smin) / (smax - smin))) if smax > smin else 0
+
+                    label_surf = self.font_small.render(label, True, (130, 135, 155))
+                    label_pos = (card_x + 16, sy + 1)
+                    self.surface.blit(label_surf, label_pos)
+                    pygame.draw.rect(self.surface, (35, 35, 50), (slider_x, sy + 4, slider_w, 8), border_radius=4)
+                    fill = int(slider_w * t)
+                    if fill > 0:
+                        pygame.draw.rect(self.surface, (50, 100, 130), (slider_x, sy + 4, fill, 8), border_radius=4)
+                    pygame.draw.circle(self.surface, (180, 190, 210), (slider_x + fill, sy + 8), 5)
+                    val_str = f"{val:{fmt}}"
+                    self.surface.blit(self.font_small.render(val_str, True, (160, 170, 190)), (slider_x + slider_w + 8, sy + 1))
+
+                    # Hover detection on slider row
+                    row_rect = pygame.Rect(card_x + 16, sy, slider_x + slider_w + 60 - card_x - 16, 18)
+                    if tip and row_rect.collidepoint(mouse_pos):
+                        hovered_tooltip = tip
+
+                y_pos += card_h + 12
+
+            self.surface.set_clip(None)
+
+            # Footer
+            footer_y = config.WINDOW_HEIGHT - 58
+            pygame.draw.rect(self.surface, COLOR_MENU_BG, (0, footer_y, config.WINDOW_WIDTH, 58))
+            pygame.draw.line(self.surface, (50, 55, 70), (0, footer_y), (config.WINDOW_WIDTH, footer_y))
+
+            back_rect = pygame.Rect(20, config.WINDOW_HEIGHT - 50, 100, 36)
+            bh = back_rect.collidepoint(mouse_pos)
+            pygame.draw.rect(self.surface, (55, 60, 80) if bh else (40, 44, 58), back_rect, border_radius=5)
+            self.surface.blit(self.font_small.render("Back", True, (180, 185, 200)),
+                              self.font_small.render("Back", True, (180, 185, 200)).get_rect(center=back_rect.center))
+            if bh:
+                hovered_tooltip = "Return to the previous menu. Changes are kept."
+
+            add_rect = pygame.Rect(config.WINDOW_WIDTH - 180, config.WINDOW_HEIGHT - 50, 160, 36)
+            ah = add_rect.collidepoint(mouse_pos)
+            pygame.draw.rect(self.surface, (40, 80, 55) if ah else (30, 60, 42), add_rect, border_radius=5)
+            self.surface.blit(self.font_small.render("+ Add Species", True, (140, 220, 160)),
+                              self.font_small.render("+ Add Species", True, (140, 220, 160)).get_rect(center=add_rect.center))
+            if ah:
+                hovered_tooltip = "Create a new custom species with default settings."
+
+            # Draw tooltip on top of everything
+            if hovered_tooltip:
+                self._draw_tooltip(mouse_pos, hovered_tooltip)
 
             pygame.display.flip()
             clock.tick(30)
 
+    def show_import_species(self, settings: SimSettings) -> tuple[SimSettings, str | None]:
+        """
+        Show a file picker for importing a species into the world.
+
+        Returns:
+            Tuple of (updated settings, species_id of imported species or None).
+        """
+        files = list_species_files("species")
+        if not files:
+            self._show_message("No species files found.", "Save species to the species/ folder first.")
+            return settings, None
+
+        clock = pygame.time.Clock()
+        scroll = 0
+
+        while True:
+            mouse_pos = pygame.mouse.get_pos()
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return settings, None
+                if self._handle_window_event(event):
+                    continue
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        return settings, None
+                if event.type == pygame.MOUSEWHEEL:
+                    scroll = max(0, scroll - event.y)
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = mouse_pos
+
+                    # Back button
+                    back_rect = pygame.Rect(20, config.WINDOW_HEIGHT - 50, 100, 36)
+                    if back_rect.collidepoint(mx, my):
+                        return settings, None
+
+                    # File items
+                    max_visible = (config.WINDOW_HEIGHT - 120) // 34
+                    for idx in range(min(max_visible, len(files) - scroll)):
+                        fi = idx + scroll
+                        item_rect = pygame.Rect(30, 70 + idx * 34, config.WINDOW_WIDTH - 60, 30)
+                        if item_rect.collidepoint(mx, my):
+                            filepath = files[fi]
+                            return self._do_import_species(settings, filepath)
+
+            # Draw
+            self.surface.fill(COLOR_MENU_BG)
+            title = self.font_heading.render("IMPORT SPECIES", True, (180, 190, 220))
+            self.surface.blit(title, (30, 20))
+            hint = self.font_small.render("Select a species file to import into the world", True, (100, 105, 130))
+            self.surface.blit(hint, (30, 44))
+
+            max_visible = (config.WINDOW_HEIGHT - 120) // 34
+            for idx in range(min(max_visible, len(files) - scroll)):
+                fi = idx + scroll
+                item_rect = pygame.Rect(30, 70 + idx * 34, config.WINDOW_WIDTH - 60, 30)
+                hovered = item_rect.collidepoint(mouse_pos)
+                pygame.draw.rect(self.surface, (40, 44, 58) if hovered else (28, 31, 42), item_rect, border_radius=4)
+                pygame.draw.rect(self.surface, (50, 55, 70), item_rect, 1, border_radius=4)
+                display = Path(files[fi]).stem
+                ft = self.font_small.render(display, True, (180, 185, 200))
+                self.surface.blit(ft, (item_rect.x + 10, item_rect.y + 7))
+
+            # Back button
+            back_rect = pygame.Rect(20, config.WINDOW_HEIGHT - 50, 100, 36)
+            back_hover = back_rect.collidepoint(mouse_pos)
+            pygame.draw.rect(self.surface, (55, 60, 80) if back_hover else (40, 44, 58), back_rect, border_radius=5)
+            bt = self.font_small.render("Back", True, (180, 185, 200))
+            self.surface.blit(bt, bt.get_rect(center=back_rect.center))
+
+            pygame.display.flip()
+            clock.tick(30)
+
+    def _do_import_species(
+        self, settings: SimSettings, filepath: str,
+    ) -> tuple[SimSettings, str | None]:
+        """Import a species file, register it, and return the new species_id."""
+        import json
+        from pangea.dna import DNA
+
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            self._show_message("Failed to read file.")
+            return settings, None
+
+        species_name = data.get("species_name", Path(filepath).stem)
+        dna_list = [DNA.from_dict(c) for c in data.get("creatures", [])]
+        if not dna_list:
+            self._show_message("No creatures found in file.")
+            return settings, None
+
+        # Ask for species name
+        name = self._show_text_input("Species Name:", species_name)
+        if not name:
+            return settings, None
+
+        registry = settings.species_registry
+        slug = name.lower().replace(" ", "_")
+        uid = registry.generate_unique_id(slug)
+
+        # Pick a color not already in use
+        used_colors = {sp.color for sp in registry.all()}
+        palette = [
+            (60, 140, 220), (200, 100, 200), (100, 200, 200),
+            (220, 160, 60), (140, 200, 100), (200, 80, 140),
+            (80, 200, 80), (200, 60, 60), (180, 140, 50),
+        ]
+        color = (120, 120, 180)
+        for c in palette:
+            if c not in used_colors:
+                color = c
+                break
+
+        new_sp = Species(
+            id=uid, name=name, color=color,
+            settings=SpeciesSettings(
+                freeplay_initial_population=len(dna_list),
+                freeplay_carrying_capacity=len(dna_list) * 2,
+                freeplay_hard_cap=len(dna_list) * 3,
+            ),
+        )
+        registry.register(new_sp)
+
+        # Update DNA to point to new species
+        for dna in dna_list:
+            dna.species_id = uid
+
+        # Store imported DNA on the species for the simulation to spawn
+        new_sp._imported_dna = dna_list
+
+        return settings, uid
+
     # ── Pause Menu ───────────────────────────────────────────
 
-    def _build_pause_buttons(self, mode: str) -> tuple[list[str], dict[str, Button]]:
+    def _build_pause_buttons(self) -> tuple[list[str], dict[str, Button]]:
         """Build pause menu buttons centered on the current window size."""
         cx = config.WINDOW_WIDTH // 2
         cy = config.WINDOW_HEIGHT // 2
         btn_w, btn_h = 220, 45
 
-        options = ["resume", "restart", "main_menu"]
-        labels = ["Resume", "Restart", "Main Menu"]
+        options = ["resume", "save_quit", "settings", "species_editor", "import_species", "restart", "main_menu"]
+        labels = ["Resume", "Save & Quit", "Settings", "Species Editor", "Import Species", "Restart", "Main Menu"]
         colors = [
             ((40, 70, 50), (55, 100, 65)),
+            ((50, 50, 70), (65, 65, 95)),
+            ((55, 55, 65), (75, 75, 90)),
+            ((50, 55, 70), (70, 78, 100)),
+            ((45, 60, 55), (60, 85, 70)),
             ((55, 55, 55), (75, 75, 75)),
             ((65, 40, 40), (90, 50, 50)),
         ]
-        if mode in ("isolation", "freeplay", "convergence"):
-            options.insert(1, "save_quit")
-            labels.insert(1, "Save & Quit")
-            colors.insert(1, ((50, 50, 70), (65, 65, 95)))
-        if mode in ("isolation", "freeplay"):
-            idx = options.index("save_quit") + 1
-            options.insert(idx, "settings")
-            labels.insert(idx, "Settings")
-            colors.insert(idx, ((55, 55, 65), (75, 75, 90)))
 
         buttons = {}
         for i, (name, label) in enumerate(zip(options, labels)):
@@ -855,14 +1241,14 @@ class Menu:
             )
         return options, buttons
 
-    def show_pause_menu(self, mode: str = "isolation", settings: SimSettings | None = None) -> tuple[str, SimSettings | None]:
+    def show_pause_menu(self, settings: SimSettings | None = None) -> tuple[str, SimSettings | None]:
         """
         Show the pause overlay with options.
 
         Returns:
             Tuple of (action_string, updated_settings_or_None).
         """
-        _, buttons = self._build_pause_buttons(mode)
+        _, buttons = self._build_pause_buttons()
         clock = pygame.time.Clock()
 
         while True:
@@ -872,7 +1258,7 @@ class Menu:
                 if event.type == pygame.QUIT:
                     return ("main_menu", settings)
                 if self._handle_window_event(event):
-                    _, buttons = self._build_pause_buttons(mode)
+                    _, buttons = self._build_pause_buttons()
                     continue
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE or event.key == pygame.K_SPACE:
@@ -882,7 +1268,17 @@ class Menu:
                         if btn.is_clicked(mouse_pos):
                             if name == "settings" and settings is not None:
                                 settings = self.show_settings(settings)
-                                _, buttons = self._build_pause_buttons(mode)
+                                _, buttons = self._build_pause_buttons()
+                                continue
+                            if name == "species_editor" and settings is not None:
+                                settings = self.show_species_editor(settings)
+                                _, buttons = self._build_pause_buttons()
+                                continue
+                            if name == "import_species" and settings is not None:
+                                settings, imported_id = self.show_import_species(settings)
+                                if imported_id:
+                                    return ("import_species:" + imported_id, settings)
+                                _, buttons = self._build_pause_buttons()
                                 continue
                             if name == "restart":
                                 if not self._show_confirm("Restart simulation?", "All progress will be lost."):
@@ -902,65 +1298,6 @@ class Menu:
             for btn in buttons.values():
                 btn.update(mouse_pos)
                 btn.draw(self.surface, self.font)
-
-            pygame.display.flip()
-            clock.tick(30)
-
-    # ── Results Screen ───────────────────────────────────────
-
-    def show_convergence_results(
-        self,
-        winner: str,
-        a_food: int,
-        b_food: int,
-        a_gens: int,
-        b_gens: int,
-    ) -> None:
-        """Show convergence mode results."""
-        clock = pygame.time.Clock()
-        frame = 0
-
-        while True:
-            frame += 1
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    return
-                if self._handle_window_event(event):
-                    continue
-                if event.type == pygame.KEYDOWN:
-                    return
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    return
-
-            self._draw_menu_bg(frame)
-
-            cx = config.WINDOW_WIDTH // 2
-            cy = config.WINDOW_HEIGHT // 2
-
-            if winner == "tie":
-                title_text = "IT'S A TIE!"
-                title_color = (220, 220, 100)
-            elif winner == "A":
-                title_text = "RED SPECIES WINS!"
-                title_color = (255, 90, 90)
-            else:
-                title_text = "BLUE SPECIES WINS!"
-                title_color = (90, 140, 255)
-
-            title = self.font_title.render(title_text, True, title_color)
-            self.surface.blit(title, title.get_rect(center=(cx, cy - 100)))
-
-            lines = [
-                f"Red (A):  {a_food} food eaten, survived {a_gens} generations",
-                f"Blue (B): {b_food} food eaten, survived {b_gens} generations",
-                "",
-                "Press any key to return to menu",
-            ]
-            y = cy + 50
-            for line in lines:
-                text = self.font.render(line, True, COLOR_HUD_TEXT)
-                self.surface.blit(text, text.get_rect(center=(cx, y)))
-                y += 35
 
             pygame.display.flip()
             clock.tick(30)
@@ -1005,10 +1342,10 @@ class Menu:
 
     def show_host_setup(self, settings: SimSettings) -> tuple[str, str, SimSettings] | None:
         """
-        Show host game setup screen — pick sub-mode and relay URL.
+        Show host game setup screen — pick relay URL.
 
         Returns:
-            Tuple of (sub_mode, relay_url, settings) or None if cancelled.
+            Tuple of (game_type, relay_url, settings) or None if cancelled.
         """
         from pangea.config import NET_DEFAULT_RELAY
 
@@ -1025,13 +1362,11 @@ class Menu:
             cx = config.WINDOW_WIDTH // 2
             cy = config.WINDOW_HEIGHT // 2
             return {
-                "isolation": Button(cx - btn_w // 2, cy - 20, btn_w, btn_h, "Host Isolation",
-                                    color=(40, 70, 50), hover_color=(55, 100, 65)),
-                "freeplay": Button(cx - btn_w // 2, cy + 50, btn_w, btn_h, "Host Freeplay",
-                                   color=(60, 55, 40), hover_color=(90, 80, 55)),
-                "relay": Button(cx - btn_w // 2, cy + 130, btn_w, btn_h, "Change Relay URL",
+                "freeplay": Button(cx - btn_w // 2, cy - 20, btn_w, btn_h, "Host Freeplay",
+                                   color=(40, 70, 50), hover_color=(55, 100, 65)),
+                "relay": Button(cx - btn_w // 2, cy + 60, btn_w, btn_h, "Change Relay URL",
                                 color=(55, 55, 65), hover_color=(75, 75, 90)),
-                "back": Button(cx - btn_w // 2, cy + 200, btn_w, btn_h, "Back",
+                "back": Button(cx - btn_w // 2, cy + 130, btn_w, btn_h, "Back",
                                color=(65, 40, 40), hover_color=(90, 50, 50)),
             }
 
@@ -1059,7 +1394,7 @@ class Menu:
                                 if new_url:
                                     relay_url = new_url
                                 buttons = _build_buttons()
-                            elif name in ("isolation", "freeplay"):
+                            elif name == "freeplay":
                                 return (name, relay_url, settings)
 
             self._draw_menu_bg(frame)
@@ -1067,7 +1402,7 @@ class Menu:
             title = self.font_heading.render("HOST GAME", True, (100, 180, 220))
             self.surface.blit(title, title.get_rect(center=(cx, cy - 120)))
 
-            sub = self.font.render("Choose a mode to host:", True, (160, 170, 190))
+            sub = self.font.render("Host a freeplay game:", True, (160, 170, 190))
             self.surface.blit(sub, sub.get_rect(center=(cx, cy - 70)))
 
             # Show current relay URL
@@ -1274,6 +1609,106 @@ class Menu:
         pygame.draw.rect(self.surface, (20, 22, 35), bg_rect, border_radius=5)
         pygame.draw.rect(self.surface, (90, 100, 140), bg_rect, 1, border_radius=5)
         self.surface.blit(text_surf, (tx + pad_x, ty + pad_y))
+
+    # ── Per-Species Save / Load ─────────────────────────────────
+
+    def _save_species_settings(self, sp: Species) -> None:
+        """Save a species definition (diet flags + settings) to a JSON file."""
+        import json
+        Path(self.SPECIES_DIR).mkdir(parents=True, exist_ok=True)
+        filename = f"{sp.id}.json"
+        filepath = Path(self.SPECIES_DIR) / filename
+        with open(filepath, "w") as f:
+            json.dump(sp.to_dict(), f, indent=2)
+
+    def _load_species_settings(self, sp: Species) -> None:
+        """Show a file picker and load species settings from a JSON file."""
+        import json
+        species_dir = Path(self.SPECIES_DIR)
+        if not species_dir.exists():
+            self._show_message("No species settings found.", f"Save a species first to {self.SPECIES_DIR}/")
+            return
+        files = sorted(
+            [f.name for f in species_dir.iterdir() if f.suffix == ".json"],
+            reverse=True,
+        )
+        if not files:
+            self._show_message("No species settings found.", f"Save a species first to {self.SPECIES_DIR}/")
+            return
+
+        # Reuse the simple file picker UI
+        clock = pygame.time.Clock()
+        scroll = 0
+        while True:
+            mouse_pos = pygame.mouse.get_pos()
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return
+                if self._handle_window_event(event):
+                    continue
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    return
+                if event.type == pygame.MOUSEWHEEL:
+                    scroll = max(0, scroll - event.y)
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    mx, my = mouse_pos
+                    back_rect = pygame.Rect(20, config.WINDOW_HEIGHT - 50, 100, 36)
+                    if back_rect.collidepoint(mx, my):
+                        return
+                    max_visible = (config.WINDOW_HEIGHT - 120) // 34
+                    for idx in range(min(max_visible, len(files) - scroll)):
+                        fi = idx + scroll
+                        item_rect = pygame.Rect(30, 70 + idx * 34, config.WINDOW_WIDTH - 60, 30)
+                        if item_rect.collidepoint(mx, my):
+                            filepath = species_dir / files[fi]
+                            try:
+                                with open(filepath) as f:
+                                    data = json.load(f)
+                                # Apply loaded values onto existing species
+                                loaded = Species.from_dict(data)
+                                # Copy diet flags
+                                for attr in (
+                                    "can_eat_plants", "plant_food_multiplier",
+                                    "can_attack_other_species", "can_attack_own_species",
+                                    "can_eat_other_corpse", "can_eat_own_corpse",
+                                    "attack_damage", "energy_steal_fraction",
+                                    "scavenge_death_radius", "scavenge_death_energy",
+                                ):
+                                    setattr(sp, attr, getattr(loaded, attr))
+                                # Copy per-species settings
+                                sp.settings = loaded.settings.copy()
+                            except Exception:
+                                pass
+                            return
+
+            # Draw file picker
+            self.surface.fill(COLOR_MENU_BG)
+            title = self.font_heading.render(f"LOAD SETTINGS FOR {sp.name.upper()}", True, (180, 190, 220))
+            self.surface.blit(title, (30, 20))
+            hint = self.font_small.render("Select a species file to load settings from  |  ESC to cancel", True, (100, 105, 130))
+            self.surface.blit(hint, (30, 44))
+
+            max_visible = (config.WINDOW_HEIGHT - 120) // 34
+            for idx in range(min(max_visible, len(files) - scroll)):
+                fi = idx + scroll
+                item_rect = pygame.Rect(30, 70 + idx * 34, config.WINDOW_WIDTH - 60, 30)
+                hovered = item_rect.collidepoint(mouse_pos)
+                color = (45, 50, 65) if hovered else (30, 33, 45)
+                pygame.draw.rect(self.surface, color, item_rect, border_radius=4)
+                pygame.draw.rect(self.surface, (55, 60, 75), item_rect, 1, border_radius=4)
+                display = files[fi].replace(".json", "")
+                ft = self.font_small.render(display, True, (180, 185, 200))
+                self.surface.blit(ft, (item_rect.x + 8, item_rect.y + 7))
+
+            # Back button
+            back_rect = pygame.Rect(20, config.WINDOW_HEIGHT - 50, 100, 36)
+            bh = back_rect.collidepoint(mouse_pos)
+            pygame.draw.rect(self.surface, (55, 60, 80) if bh else (40, 44, 58), back_rect, border_radius=5)
+            bt = self.font_small.render("Back", True, (180, 185, 200))
+            self.surface.blit(bt, bt.get_rect(center=back_rect.center))
+
+            pygame.display.flip()
+            clock.tick(30)
 
     def _draw_toggle(self, x: int, y: int, on: bool) -> None:
         """Draw a toggle switch widget."""

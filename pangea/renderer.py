@@ -21,20 +21,12 @@ from pangea.config import (
     COLOR_BIOME_ROAD,
     COLOR_BIOME_SWAMP,
     COLOR_BIOME_WATER,
-    COLOR_CARNIVORE,
     COLOR_FOOD,
     COLOR_HAZARD_COLD,
     COLOR_HAZARD_LAVA,
     COLOR_HERBIVORE,
     COLOR_HUD_TEXT,
-    COLOR_LINEAGE_A,
-    COLOR_LINEAGE_B,
     COLOR_PREDATOR,
-    COLOR_SCAVENGER,
-    DIET_CARNIVORE,
-    DIET_HERBIVORE,
-    DIET_NAMES,
-    DIET_SCAVENGER,
 )
 import pangea.config as config
 from pangea.config import EVOLUTION_POINTS
@@ -185,7 +177,6 @@ class Renderer:
     def draw(
         self,
         world: World,
-        mode: str = "isolation",
         paused: bool = False,
         tools: PlayerTools | None = None,
         show_toolbar: bool = False,
@@ -219,13 +210,13 @@ class Renderer:
         self._draw_food(world)
 
         # Creatures
-        self._draw_creatures(world, mode)
+        self._draw_creatures(world)
 
         # Predators
         self._draw_predators(world)
 
         # Update particle tracking
-        self._track_events(world, mode)
+        self._track_events(world)
 
         # Particles (on top of creatures)
         self.particles.update(1 / 60)
@@ -248,7 +239,7 @@ class Renderer:
         self._end_world_draw()
 
         # HUD (drawn directly on screen, not world surface)
-        self._draw_hud(world, mode, tools)
+        self._draw_hud(world, tools)
 
         # Toolbar
         if show_toolbar and tools:
@@ -543,13 +534,13 @@ class Renderer:
 
     # ── Creatures ────────────────────────────────────────────
 
-    def _draw_creatures(self, world: World, mode: str) -> None:
+    def _draw_creatures(self, world: World) -> None:
         """Draw all living creatures with richer visuals."""
         for creature in world.creatures:
             if not creature.alive:
                 continue
 
-            color = self._creature_color(creature, mode)
+            color = self._creature_color(creature)
             radius = max(2, int(creature.dna.effective_radius))
             cx, cy = int(creature.x), int(creature.y)
 
@@ -584,33 +575,19 @@ class Renderer:
             hy = cy + int(math.sin(creature.heading) * (radius + 5))
             pygame.draw.line(self.surface, (220, 220, 240), (cx, cy), (hx, hy), 2)
 
-    def _creature_color(self, creature: Creature, mode: str) -> tuple[int, int, int]:
+    def _creature_color(self, creature: Creature) -> tuple[int, int, int]:
         """
-        Determine creature color based on mode and diet.
+        Determine creature color based on species and dominant trait.
 
-        Isolation: blend of diet color + dominant trait, modulated by energy.
-        Convergence: team colors with diet tint.
+        Blends species color with dominant trait color, modulated by energy.
         """
-        energy_ratio = max(0.3, min(1.0, creature.energy / BASE_ENERGY))
+        _base_e = creature.species.settings.base_energy if creature.species else BASE_ENERGY
+        energy_ratio = max(0.3, min(1.0, creature.energy / _base_e))
 
-        # Diet base tint
-        diet_colors = {
-            DIET_HERBIVORE: COLOR_HERBIVORE,
-            DIET_CARNIVORE: COLOR_CARNIVORE,
-            DIET_SCAVENGER: COLOR_SCAVENGER,
-        }
-        diet_color = diet_colors.get(creature.dna.diet, COLOR_HERBIVORE)
+        # Species base tint
+        species_color = creature.species.color if creature.species else COLOR_HERBIVORE
 
-        if mode == "convergence":
-            # Team color blended with diet tint
-            team = COLOR_LINEAGE_A if creature.lineage == "A" else COLOR_LINEAGE_B
-            blended = tuple(
-                int((team[i] * 0.6 + diet_color[i] * 0.4) * energy_ratio)
-                for i in range(3)
-            )
-            return blended
-
-        # Isolation: blend diet color with dominant-trait color
+        # Blend species color with dominant-trait color
         dna = creature.dna
         traits = [dna.speed, dna.size, dna.vision, dna.efficiency, dna.lifespan]
         trait_idx = traits.index(max(traits))
@@ -624,16 +601,16 @@ class Renderer:
         ]
         trait_color = trait_colors[trait_idx]
 
-        # 50% diet, 50% trait
+        # 50% species, 50% trait
         blended = tuple(
-            int((diet_color[i] * 0.5 + trait_color[i] * 0.5) * energy_ratio)
+            int((species_color[i] * 0.5 + trait_color[i] * 0.5) * energy_ratio)
             for i in range(3)
         )
         return blended
 
     # ── Event Tracking (for particles) ───────────────────────
 
-    def _track_events(self, world: World, mode: str) -> None:
+    def _track_events(self, world: World) -> None:
         """Track creature state changes to emit particles."""
         for creature in world.creatures:
             cid = id(creature)
@@ -641,7 +618,7 @@ class Renderer:
             # Death detection
             was_alive = self._prev_alive.get(cid, True)
             if was_alive and not creature.alive:
-                color = self._creature_color(creature, mode)
+                color = self._creature_color(creature)
                 self.particles.emit_death(creature.x, creature.y, color)
             self._prev_alive[cid] = creature.alive
 
@@ -653,49 +630,37 @@ class Renderer:
 
     # ── HUD ──────────────────────────────────────────────────
 
-    def _draw_hud(self, world: World, mode: str, tools: PlayerTools | None = None) -> None:
+    def _draw_hud(self, world: World, tools: PlayerTools | None = None) -> None:
         """Draw the heads-up display with generation info."""
         # Semi-transparent HUD background
-        hud_h = 150 if mode == "isolation" else (230 if mode == "freeplay" else 200)
+        hud_h = 230
         hud_surf = pygame.Surface((280, hud_h), pygame.SRCALPHA)
         hud_surf.fill((10, 10, 20, 160))
         self.surface.blit(hud_surf, (5, 5))
 
         y = 12
 
-        if mode == "freeplay":
-            alive = world.alive_count()
-            cap = world.settings.freeplay_carrying_capacity
-            # Get stats from simulation (stored on world for convenience)
-            elapsed = world.elapsed_time
-            mins = int(elapsed) // 60
-            secs = int(elapsed) % 60
-            # Compute avg generation of living creatures
-            alive_creatures = [c for c in world.creatures if c.alive]
-            avg_gen = (
-                sum(c.generation for c in alive_creatures) / len(alive_creatures)
-                if alive_creatures else 0
-            )
-            # Get birth/death rates if available
-            births_rate = getattr(world, '_freeplay_births_per_min', 0.0)
-            deaths_rate = getattr(world, '_freeplay_deaths_per_min', 0.0)
-            lines = [
-                (f"Freeplay  {mins}m {secs:02d}s", (220, 180, 100)),
-                (f"Pop: {alive} / {cap} (cap)", (180, 220, 180)),
-                (f"Births: {world.total_births}  Deaths: {world.total_deaths}", (180, 180, 200)),
-                (f"B/min: {births_rate:.1f}  D/min: {deaths_rate:.1f}", (160, 170, 190)),
-                (f"Avg Gen: {avg_gen:.1f}", (140, 180, 255)),
-                (f"Food: {len(world.food)}", (140, 230, 140)),
-                (self._time_of_day_label(world.daylight_factor), (255, 220, 140)),
-            ]
-        else:
-            lines = [
-                (f"Gen: {world.generation}", (140, 180, 255)),
-                (f"Alive: {world.alive_count()} / {len(world.creatures)}", (180, 220, 180)),
-                (f"Time: {world.elapsed_time:.1f}s", (180, 180, 200)),
-                (f"Food: {len(world.food)}", (140, 230, 140)),
-                (self._time_of_day_label(world.daylight_factor), (255, 220, 140)),
-            ]
+        alive = world.alive_count()
+        cap = world.settings.freeplay_carrying_capacity
+        elapsed = world.elapsed_time
+        mins = int(elapsed) // 60
+        secs = int(elapsed) % 60
+        alive_creatures = [c for c in world.creatures if c.alive]
+        avg_gen = (
+            sum(c.generation for c in alive_creatures) / len(alive_creatures)
+            if alive_creatures else 0
+        )
+        births_rate = getattr(world, '_freeplay_births_per_min', 0.0)
+        deaths_rate = getattr(world, '_freeplay_deaths_per_min', 0.0)
+        lines = [
+            (f"Freeplay  {mins}m {secs:02d}s", (220, 180, 100)),
+            (f"Pop: {alive} / {cap} (cap)", (180, 220, 180)),
+            (f"Births: {world.total_births}  Deaths: {world.total_deaths}", (180, 180, 200)),
+            (f"B/min: {births_rate:.1f}  D/min: {deaths_rate:.1f}", (160, 170, 190)),
+            (f"Avg Gen: {avg_gen:.1f}", (140, 180, 255)),
+            (f"Food: {len(world.food)}", (140, 230, 140)),
+            (self._time_of_day_label(world.daylight_factor), (255, 220, 140)),
+        ]
 
         if tools and tools.drought_active:
             lines.append(("DROUGHT ACTIVE", (255, 200, 50)))
@@ -712,15 +677,6 @@ class Renderer:
             season_label = "Scarce"
             season_color = (255, 160, 80)
         lines.append((f"Season: {season_label} ({season_mult:.0%})", season_color))
-
-        if mode == "convergence":
-            lines.append(("", (0, 0, 0)))
-            a_alive = world.alive_count_by_lineage("A")
-            b_alive = world.alive_count_by_lineage("B")
-            a_food = world.food_eaten_by_lineage("A")
-            b_food = world.food_eaten_by_lineage("B")
-            lines.append((f"Red:  {a_alive} alive  {a_food} food", (220, 90, 90)))
-            lines.append((f"Blue: {b_alive} alive  {b_food} food", (90, 130, 220)))
 
         for text_str, color in lines:
             if text_str:
@@ -843,7 +799,8 @@ class Renderer:
             # Energy bar above creature
             bar_width = 24
             bar_height = 4
-            ratio = max(0.0, min(1.0, creature.energy / BASE_ENERGY))
+            _base_e = creature.species.settings.base_energy if creature.species else BASE_ENERGY
+            ratio = max(0.0, min(1.0, creature.energy / _base_e))
             bx = cx - bar_width // 2
             by = cy - int(creature.dna.effective_radius) - 10
 
@@ -871,7 +828,6 @@ class Renderer:
         world: World,
         best_fitness: float,
         avg_fitness: float,
-        mode: str = "isolation",
     ) -> None:
         """Draw a generation summary overlay."""
         overlay = pygame.Surface((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.SRCALPHA)
@@ -885,11 +841,6 @@ class Renderer:
             (f"Best Fitness: {best_fitness:.1f}", (100, 255, 130), False),
             (f"Avg Fitness:  {avg_fitness:.1f}", (180, 200, 220), False),
         ]
-
-        if mode == "convergence":
-            lines.append(("", (0, 0, 0), False))
-            lines.append((f"Red food: {world.food_eaten_by_lineage('A')}", (220, 90, 90), False))
-            lines.append((f"Blue food: {world.food_eaten_by_lineage('B')}", (90, 130, 220), False))
 
         lines.append(("", (0, 0, 0), False))
         lines.append(("Starting next generation...", (120, 120, 150), False))
@@ -913,7 +864,6 @@ class Renderer:
     def draw_evolution_panel(
         self,
         world: World,
-        mode: str,
         generation_history: list[dict],
     ) -> None:
         """Draw the evolution/species tracker side panel."""
@@ -928,14 +878,9 @@ class Renderer:
         pygame.draw.rect(panel, (50, 55, 80), (0, 0, panel_w, panel_h), 1, border_radius=6)
         self.surface.blit(panel, (panel_x, panel_y))
 
-        if mode == "freeplay":
-            self._draw_freeplay_evolution_panel(
-                world, panel_x, panel_y, panel_w, panel_h, generation_history,
-            )
-        else:
-            self._draw_isolation_evolution_panel(
-                world, mode, panel_x, panel_y, panel_w, panel_h, generation_history,
-            )
+        self._draw_freeplay_evolution_panel(
+            world, panel_x, panel_y, panel_w, panel_h, generation_history,
+        )
 
     def _draw_freeplay_evolution_panel(
         self,
@@ -974,7 +919,7 @@ class Renderer:
                 continue
             cx = map_x + int(creature.x * sx)
             cy = y + int(creature.y * sy)
-            color = self._creature_color(creature, "freeplay")
+            color = self._creature_color(creature)
             r = max(2, int(creature.dna.effective_radius * sx * 2))
             pygame.draw.circle(self.surface, color, (cx, cy), r)
 
@@ -985,14 +930,14 @@ class Renderer:
         y += map_h + 18
 
         # ── Per-Species Cards ──
-        by_diet: dict[int, list] = {0: [], 1: [], 2: []}
+        registry = world.settings.species_registry
+        by_species: dict[str, list] = {sp.id: [] for sp in registry.all()}
         for c in alive:
-            by_diet.setdefault(c.dna.diet, []).append(c)
+            by_species.setdefault(c.dna.species_id, []).append(c)
 
-        diet_info = [
-            (0, "Herbivore", config.COLOR_HERBIVORE, world.settings.herbivore),
-            (1, "Carnivore", config.COLOR_CARNIVORE, world.settings.carnivore),
-            (2, "Scavenger", config.COLOR_SCAVENGER, world.settings.scavenger),
+        species_info = [
+            (sp.id, sp.name, sp.color, sp.settings)
+            for sp in registry.all()
         ]
 
         trait_colors = [
@@ -1001,8 +946,8 @@ class Renderer:
         ]
         max_pts = EVOLUTION_POINTS * 0.6
 
-        for diet_id, name, color, ds in diet_info:
-            creatures = by_diet.get(diet_id, [])
+        for sp_id, name, color, ss in species_info:
+            creatures = by_species.get(sp_id, [])
             n = len(creatures)
 
             # Card background
@@ -1017,7 +962,7 @@ class Renderer:
 
             # Header: Name + count/cap
             header = self.font.render(
-                f"{name}  {n}/{ds.freeplay_hard_cap}", True, color,
+                f"{name}  {n}/{ss.freeplay_hard_cap}", True, color,
             )
             self.surface.blit(header, (panel_x + 20, y + 3))
 
@@ -1099,20 +1044,19 @@ class Renderer:
             n_pts = len(history)
             x_step = graph_w / max(n_pts - 1, 1)
 
-            # Collect all per-diet avg_gen values
-            diet_gen_keys = [
-                ("herb_stats", config.COLOR_HERBIVORE),
-                ("carn_stats", config.COLOR_CARNIVORE),
-                ("scav_stats", config.COLOR_SCAVENGER),
+            # Collect all per-species avg_gen values
+            species_gen_keys = [
+                (f"{sp.id}_stats", sp.color)
+                for sp in registry.all()
             ]
             # Also draw overall avg_gen
             all_gen_vals = [h.get("avg_gen", 0) for h in history]
             y_max_gen = max(max(all_gen_vals), 1) * 1.1
 
-            # Check per-diet stats exist
-            has_diet_stats = "herb_stats" in history[-1]
-            if has_diet_stats:
-                for stats_key, _ in diet_gen_keys:
+            # Check per-species stats exist
+            has_species_stats = any(f"{sp.id}_stats" in history[-1] for sp in registry.all())
+            if has_species_stats:
+                for stats_key, _ in species_gen_keys:
                     vals = [h.get(stats_key, {}).get("avg_gen", 0) for h in history]
                     y_max_gen = max(y_max_gen, max(vals) * 1.1 if vals else 1)
 
@@ -1136,9 +1080,9 @@ class Renderer:
                     self.surface, (100, 120, 160), False, overall_pts, 1,
                 )
 
-            # Per-diet avg gen lines
-            if has_diet_stats:
-                for stats_key, color in diet_gen_keys:
+            # Per-species avg gen lines
+            if has_species_stats:
+                for stats_key, color in species_gen_keys:
                     pts = []
                     for i, h in enumerate(history):
                         val = h.get(stats_key, {}).get("avg_gen", 0)
@@ -1190,13 +1134,12 @@ class Renderer:
             if len(pop_points) >= 2:
                 pygame.draw.lines(self.surface, (100, 220, 255), False, pop_points, 1)
 
-            # Per-diet population lines
-            diet_pop_keys = [
-                ("herbivores", config.COLOR_HERBIVORE),
-                ("carnivores", config.COLOR_CARNIVORE),
-                ("scavengers", config.COLOR_SCAVENGER),
+            # Per-species population lines
+            species_pop_keys = [
+                (sp.id, sp.color)
+                for sp in registry.all()
             ]
-            for key, color in diet_pop_keys:
+            for key, color in species_pop_keys:
                 pts = []
                 for i, h in enumerate(history):
                     px = graph_x + int(i * x_step)
@@ -1268,244 +1211,6 @@ class Renderer:
                 (graph_x + graph_w - time_range.get_width(), y),
             )
 
-    def _draw_isolation_evolution_panel(
-        self,
-        world: World,
-        mode: str,
-        panel_x: int,
-        panel_y: int,
-        panel_w: int,
-        panel_h: int,
-        generation_history: list[dict],
-    ) -> None:
-        """Draw evolution panel for isolation/convergence mode (original layout)."""
-        y = panel_y + 8
-
-        # ── Title ──
-        title = self.font_large.render("Evolution", True, (140, 180, 255))
-        self.surface.blit(title, (panel_x + 12, y))
-
-        # ── Minimap ──
-        map_x = panel_x + 12
-        map_y = panel_y + 40
-        map_w = panel_w - 24
-        map_h = 150
-
-        pygame.draw.rect(self.surface, (20, 22, 35), (map_x, map_y, map_w, map_h), border_radius=4)
-        pygame.draw.rect(self.surface, (40, 45, 60), (map_x, map_y, map_w, map_h), 1, border_radius=4)
-
-        sx = map_w / max(world.width, 1)
-        sy = map_h / max(world.height, 1)
-        for food in world.food:
-            fx = map_x + int(food.x * sx)
-            fy = map_y + int(food.y * sy)
-            pygame.draw.circle(self.surface, (40, 140, 40), (fx, fy), 1)
-        for creature in world.creatures:
-            if not creature.alive:
-                continue
-            cx = map_x + int(creature.x * sx)
-            cy = map_y + int(creature.y * sy)
-            color = self._creature_color(creature, mode)
-            r = max(2, int(creature.dna.effective_radius * sx * 2))
-            pygame.draw.circle(self.surface, color, (cx, cy), r)
-
-        label = self.font_small.render(
-            f"Minimap — {world.alive_count()} alive", True, (120, 130, 160),
-        )
-        self.surface.blit(label, (map_x, map_y + map_h + 4))
-
-        # ── Avg Traits Bar Chart ──
-        bar_y = map_y + map_h + 26
-        bar_label = self.font.render("Avg Traits (this gen)", True, (180, 200, 230))
-        self.surface.blit(bar_label, (panel_x + 12, bar_y))
-        bar_y += 24
-
-        alive = [c for c in world.creatures if c.alive]
-        if alive:
-            avg_speed = sum(c.dna.speed for c in alive) / len(alive)
-            avg_size = sum(c.dna.size for c in alive) / len(alive)
-            avg_vision = sum(c.dna.vision for c in alive) / len(alive)
-            avg_eff = sum(c.dna.efficiency for c in alive) / len(alive)
-            avg_life = sum(c.dna.lifespan for c in alive) / len(alive)
-        else:
-            avg_speed = avg_size = avg_vision = avg_eff = avg_life = 0
-
-        traits = [
-            ("SPD", avg_speed, (80, 200, 255)),
-            ("SIZ", avg_size, (255, 140, 60)),
-            ("VIS", avg_vision, (180, 100, 255)),
-            ("EFF", avg_eff, (100, 255, 120)),
-            ("LIF", avg_life, (220, 200, 60)),
-        ]
-        max_pts = EVOLUTION_POINTS * 0.6
-        bar_w_max = panel_w - 80
-        for name, val, color in traits:
-            lbl = self.font_small.render(f"{name}", True, color)
-            self.surface.blit(lbl, (panel_x + 12, bar_y))
-            bx = panel_x + 50
-            pygame.draw.rect(
-                self.surface, (30, 32, 45),
-                (bx, bar_y + 2, bar_w_max, 12), border_radius=3,
-            )
-            fill_w = max(1, int(bar_w_max * min(val / max_pts, 1.0)))
-            pygame.draw.rect(
-                self.surface, color,
-                (bx, bar_y + 2, fill_w, 12), border_radius=3,
-            )
-            val_text = self.font_small.render(f"{val:.0f}", True, (160, 170, 190))
-            self.surface.blit(val_text, (bx + bar_w_max + 4, bar_y))
-            bar_y += 20
-
-        # ── History Graphs ──
-        if len(generation_history) >= 2:
-            graph_y = bar_y + 16
-            graph_label = self.font.render("Trait Evolution", True, (180, 200, 230))
-            self.surface.blit(graph_label, (panel_x + 12, graph_y))
-            graph_y += 24
-
-            graph_x = panel_x + 12
-            graph_w = panel_w - 24
-            graph_h = 120
-
-            pygame.draw.rect(
-                self.surface, (20, 22, 35),
-                (graph_x, graph_y, graph_w, graph_h), border_radius=4,
-            )
-            pygame.draw.rect(
-                self.surface, (40, 45, 60),
-                (graph_x, graph_y, graph_w, graph_h), 1, border_radius=4,
-            )
-
-            for i in range(1, 4):
-                gy = graph_y + int(graph_h * i / 4)
-                pygame.draw.line(
-                    self.surface, (30, 35, 50),
-                    (graph_x, gy), (graph_x + graph_w, gy),
-                )
-
-            history = generation_history
-            n = len(history)
-            x_step = graph_w / max(n - 1, 1)
-
-            all_vals = []
-            for h in history:
-                all_vals.extend([
-                    h["avg_speed"], h["avg_size"], h["avg_vision"],
-                    h["avg_efficiency"], h["avg_lifespan"],
-                ])
-            y_min = max(0, min(all_vals) - 2)
-            y_max = max(all_vals) + 2
-            y_range = max(y_max - y_min, 1)
-
-            trait_keys = [
-                ("avg_speed", (80, 200, 255)),
-                ("avg_size", (255, 140, 60)),
-                ("avg_vision", (180, 100, 255)),
-                ("avg_efficiency", (100, 255, 120)),
-                ("avg_lifespan", (220, 200, 60)),
-            ]
-
-            for key, color in trait_keys:
-                points = []
-                for i, h in enumerate(history):
-                    px = graph_x + int(i * x_step)
-                    py = graph_y + graph_h - int(
-                        (h[key] - y_min) / y_range * graph_h
-                    )
-                    py = max(graph_y, min(graph_y + graph_h, py))
-                    points.append((px, py))
-                if len(points) >= 2:
-                    pygame.draw.lines(self.surface, color, False, points, 2)
-
-            gen_start = self.font_small.render(
-                f"G{history[0]['gen']}", True, (90, 95, 110),
-            )
-            gen_end = self.font_small.render(
-                f"G{history[-1]['gen']}", True, (90, 95, 110),
-            )
-            self.surface.blit(gen_start, (graph_x, graph_y + graph_h + 4))
-            self.surface.blit(
-                gen_end,
-                (graph_x + graph_w - gen_end.get_width(), graph_y + graph_h + 4),
-            )
-
-            legend_y = graph_y + graph_h + 22
-            legend_x = panel_x + 12
-            for name, (key, color) in zip(
-                ["Spd", "Siz", "Vis", "Eff", "Lif"], trait_keys,
-            ):
-                pygame.draw.rect(self.surface, color, (legend_x, legend_y + 2, 10, 10))
-                lbl = self.font_small.render(name, True, (140, 150, 170))
-                self.surface.blit(lbl, (legend_x + 14, legend_y))
-                legend_x += 58
-
-        # ── Stats Summary ──
-        if len(generation_history) >= 2:
-            summary_y = bar_y + 180
-        else:
-            summary_y = bar_y + 16
-        if alive:
-            avg_energy = sum(c.energy for c in alive) / len(alive)
-            avg_food = sum(c.food_eaten for c in alive) / len(alive)
-            total_food = sum(c.food_eaten for c in world.creatures)
-            stats = [
-                (f"Avg Energy: {avg_energy:.0f}", (180, 220, 180)),
-                (f"Avg Food:   {avg_food:.1f}", (140, 230, 140)),
-                (f"Total Food: {total_food}", (100, 200, 100)),
-                (f"Gen: {world.generation}", (140, 180, 255)),
-            ]
-            for text_str, color in stats:
-                txt = self.font_small.render(text_str, True, color)
-                self.surface.blit(txt, (panel_x + 12, summary_y))
-                summary_y += 18
-
-        # ── Species Breakdown ──
-        species_y = summary_y + 10 if alive else bar_y + 16
-        species_label = self.font.render("Species", True, (180, 200, 230))
-        self.surface.blit(species_label, (panel_x + 12, species_y))
-        species_y += 24
-
-        all_alive = [c for c in world.creatures if c.alive]
-        total_alive = len(all_alive)
-
-        if mode == "convergence":
-            lineage_counts = {}
-            for c in all_alive:
-                lineage_counts[c.lineage] = lineage_counts.get(c.lineage, 0) + 1
-            species_items = [
-                ("Species A", lineage_counts.get("A", 0), config.COLOR_LINEAGE_A),
-                ("Species B", lineage_counts.get("B", 0), config.COLOR_LINEAGE_B),
-            ]
-        else:
-            diet_counts = {0: 0, 1: 0, 2: 0}
-            for c in all_alive:
-                diet_counts[c.dna.diet] = diet_counts.get(c.dna.diet, 0) + 1
-            species_items = [
-                ("Herbivore", diet_counts[0], config.COLOR_HERBIVORE),
-                ("Carnivore", diet_counts[1], config.COLOR_CARNIVORE),
-                ("Scavenger", diet_counts[2], config.COLOR_SCAVENGER),
-            ]
-
-        bar_w_full = panel_w - 24
-        for name, count, color in species_items:
-            pct = (count / total_alive * 100) if total_alive else 0
-            lbl = self.font_small.render(
-                f"{name}: {count} ({pct:.0f}%)", True, color,
-            )
-            self.surface.blit(lbl, (panel_x + 12, species_y))
-            species_y += 16
-            pygame.draw.rect(
-                self.surface, (30, 32, 45),
-                (panel_x + 12, species_y, bar_w_full, 8), border_radius=3,
-            )
-            fill = max(1, int(bar_w_full * count / total_alive)) if total_alive else 0
-            if fill > 0:
-                pygame.draw.rect(
-                    self.surface, color,
-                    (panel_x + 12, species_y, fill, 8), border_radius=3,
-                )
-            species_y += 14
-
     # ── Creature Inspection ──────────────────────────────────
 
     def try_select_creature(self, world: World, mx: int, my: int) -> bool:
@@ -1536,7 +1241,7 @@ class Renderer:
         """Deselect the currently selected creature."""
         self.selected_creature = None
 
-    def draw_creature_stats(self, world: World, mode: str) -> None:
+    def draw_creature_stats(self, world: World) -> None:
         """Draw a stats panel for the selected creature."""
         creature = self.selected_creature
         if creature is None or not creature.alive:
@@ -1586,7 +1291,8 @@ class Renderer:
 
         # Stats lines
         y = py + 28
-        energy_pct = creature.energy / BASE_ENERGY * 100
+        _base_e = creature.species.settings.base_energy if creature.species else BASE_ENERGY
+        energy_pct = creature.energy / _base_e * 100
         age_max = dna.effective_lifespan
         stats_lines = [
             (f"Energy: {creature.energy:.0f} ({energy_pct:.0f}%)",
@@ -1599,9 +1305,8 @@ class Renderer:
             (f"Vision:     {dna.vision:3d}  ({dna.effective_vision:.0f} px)", (180, 100, 255)),
             (f"Efficiency: {dna.efficiency:3d}  (x{dna.effective_efficiency:.2f})", (100, 255, 120)),
             (f"Lifespan:   {dna.lifespan:3d}  ({age_max:.0f}s)", (220, 200, 60)),
-            (f"Diet:       {DIET_NAMES.get(dna.diet, 'unknown')}",
-             {DIET_HERBIVORE: COLOR_HERBIVORE, DIET_CARNIVORE: COLOR_CARNIVORE,
-              DIET_SCAVENGER: COLOR_SCAVENGER}.get(dna.diet, (200, 200, 200))),
+            (f"Species:    {creature.species.name if creature.species else dna.species_id}",
+             creature.species.color if creature.species else (200, 200, 200)),
         ]
 
         for text_str, color in stats_lines:
