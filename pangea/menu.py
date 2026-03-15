@@ -416,13 +416,99 @@ class Menu:
 
     # ── File Selection ───────────────────────────────────────
 
+    def _load_species_names(self, species_path: Path, files: list[str]) -> dict[str, str]:
+        """Load species_name from each JSON file. Returns {filename: display_name}."""
+        import json
+        names: dict[str, str] = {}
+        for fname in files:
+            try:
+                with open(species_path / fname, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                name = data.get("species_name", "")
+                gen = data.get("generation", 0)
+                count = len(data.get("creatures", []))
+                names[fname] = f"{name}  (gen {gen}, {count} creatures)"
+            except Exception:
+                names[fname] = fname
+        return names
+
+    def _rename_species(self, filepath: Path, new_name: str) -> None:
+        """Update the species_name field in a JSON file."""
+        import json
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data["species_name"] = new_name
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+    def _show_text_input(self, prompt: str, initial: str = "") -> str | None:
+        """Show a text input dialog. Returns the entered text or None if cancelled."""
+        clock = pygame.time.Clock()
+        text = initial
+        cursor_blink = 0
+
+        while True:
+            cursor_blink += 1
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return None
+                if self._handle_window_event(event):
+                    continue
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        return None
+                    elif event.key == pygame.K_RETURN:
+                        return text.strip()
+                    elif event.key == pygame.K_BACKSPACE:
+                        text = text[:-1]
+                    else:
+                        if event.unicode and event.unicode.isprintable() and len(text) < 40:
+                            text += event.unicode
+
+            # Dark overlay
+            overlay = pygame.Surface((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 180))
+            self.surface.blit(overlay, (0, 0))
+
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
+            dialog_w, dialog_h = 460, 140
+            dialog_rect = pygame.Rect(cx - dialog_w // 2, cy - dialog_h // 2, dialog_w, dialog_h)
+            pygame.draw.rect(self.surface, (25, 28, 40), dialog_rect, border_radius=8)
+            pygame.draw.rect(self.surface, (80, 90, 120), dialog_rect, 2, border_radius=8)
+
+            # Prompt
+            prompt_surf = self.font_heading.render(prompt, True, (180, 190, 220))
+            self.surface.blit(prompt_surf, prompt_surf.get_rect(center=(cx, cy - 35)))
+
+            # Text field
+            field_rect = pygame.Rect(cx - 180, cy - 5, 360, 30)
+            pygame.draw.rect(self.surface, (15, 17, 28), field_rect, border_radius=4)
+            pygame.draw.rect(self.surface, (70, 80, 110), field_rect, 1, border_radius=4)
+
+            cursor_char = "|" if (cursor_blink // 15) % 2 == 0 else ""
+            display = text + cursor_char
+            text_surf = self.font_subtitle.render(display, True, (220, 225, 240))
+            self.surface.blit(text_surf, (field_rect.x + 8, field_rect.y + 7))
+
+            # Hint
+            hint = self.font_small.render("Enter to confirm, Esc to cancel", True, (90, 95, 110))
+            self.surface.blit(hint, hint.get_rect(center=(cx, cy + 42)))
+
+            pygame.display.flip()
+            clock.tick(30)
+
     def show_file_select(self, species_dir: str = "species") -> tuple[str, str] | None:
         """
         Show file selection screen for convergence mode.
+        Left-click to select, right-click to delete, F2 or double-click name to rename.
 
         Returns:
             Tuple of (file_a_path, file_b_path) or None if cancelled.
         """
+        import os
+
         species_path = Path(species_dir)
         if not species_path.exists():
             species_path.mkdir(parents=True, exist_ok=True)
@@ -436,9 +522,11 @@ class Menu:
                 "Press ESC to go back.",
             )
 
+        names = self._load_species_names(species_path, files)
         selected: list[int] = []
         scroll_offset = 0
         max_visible = 12
+        hovered_idx = -1
 
         clock = pygame.time.Clock()
 
@@ -449,6 +537,14 @@ class Menu:
             list_top = cy - 170
             start_y = cy + 260
 
+            # Track which item is hovered
+            hovered_idx = -1
+            for i in range(min(max_visible, len(files) - scroll_offset)):
+                idx = i + scroll_offset
+                item_rect = pygame.Rect(cx - 200, list_top + i * 35, 400, 30)
+                if item_rect.collidepoint(mouse_pos):
+                    hovered_idx = idx
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return None
@@ -457,6 +553,43 @@ class Menu:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         return None
+                    # F2 to rename hovered item
+                    if event.key == pygame.K_F2 and hovered_idx >= 0:
+                        fname = files[hovered_idx]
+                        old_name = names[fname].split("  (")[0]
+                        new_name = self._show_text_input("Rename Species", old_name)
+                        if new_name:
+                            self._rename_species(species_path / fname, new_name)
+                            names = self._load_species_names(species_path, files)
+
+                # Right-click to delete
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+                    for i in range(min(max_visible, len(files) - scroll_offset)):
+                        idx = i + scroll_offset
+                        item_rect = pygame.Rect(cx - 200, list_top + i * 35, 400, 30)
+                        if item_rect.collidepoint(mouse_pos):
+                            fname = files[idx]
+                            display = names[fname].split("  (")[0]
+                            if self._show_confirm(
+                                f"Delete '{display}'?",
+                                "This cannot be undone.",
+                            ):
+                                os.remove(species_path / fname)
+                                # Remove from selection
+                                selected = [s for s in selected if s != idx]
+                                selected = [s - 1 if s > idx else s for s in selected]
+                                # Refresh file list
+                                files = sorted(str(f.name) for f in species_path.glob("*.json"))
+                                names = self._load_species_names(species_path, files)
+                                scroll_offset = max(0, min(scroll_offset, len(files) - max_visible))
+                                if len(files) < 2:
+                                    return self._show_message(
+                                        "Need at least 2 species files.",
+                                        "Save species in Isolation Mode first!",
+                                        "Press ESC to go back.",
+                                    )
+                            break
+
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     for i in range(min(max_visible, len(files) - scroll_offset)):
                         idx = i + scroll_offset
@@ -483,7 +616,7 @@ class Menu:
             self.surface.blit(title, title.get_rect(center=(cx, list_top - 70)))
 
             hint = self.font_subtitle.render(
-                "Click to select (Red = Species A, Blue = Species B)",
+                "Left-click: select  |  Right-click: delete  |  F2: rename",
                 True, (120, 120, 150),
             )
             self.surface.blit(hint, hint.get_rect(center=(cx, list_top - 35)))
@@ -495,7 +628,7 @@ class Menu:
                 if idx in selected:
                     sel_idx = selected.index(idx)
                     color = (100, 40, 40) if sel_idx == 0 else (40, 50, 100)
-                    label = " [A - Red]" if sel_idx == 0 else " [B - Blue]"
+                    label = " [A]" if sel_idx == 0 else " [B]"
                 else:
                     color = (35, 38, 52)
                     label = ""
@@ -506,7 +639,9 @@ class Menu:
 
                 pygame.draw.rect(self.surface, color, item_rect, border_radius=4)
                 pygame.draw.rect(self.surface, (60, 65, 80), item_rect, 1, border_radius=4)
-                text = self.font_subtitle.render(files[idx] + label, True, COLOR_HUD_TEXT)
+
+                display_name = names.get(files[idx], files[idx])
+                text = self.font_subtitle.render(display_name + label, True, COLOR_HUD_TEXT)
                 self.surface.blit(text, (item_rect.x + 10, item_rect.y + 7))
 
             if len(selected) == 2:
