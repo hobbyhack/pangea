@@ -19,6 +19,7 @@ from pangea.config import (
     COLOR_MENU_BG,
 )
 import pangea.config as config
+from pangea.save_load import delete_save, list_saves
 from pangea.settings import SETTING_DEFS, SimSettings
 
 
@@ -179,6 +180,163 @@ class Menu:
 
             pygame.display.flip()
             clock.tick(30)
+
+    # ── Mode Select (New / Load Save) ───────────────────────
+
+    def _mode_display_name(self, mode: str) -> str:
+        """Return a human-readable title for a game mode."""
+        return {"isolation": "Isolation Mode", "convergence": "Convergence Mode", "freeplay": "Freeplay Mode"}.get(mode, mode.title())
+
+    def show_mode_select(self, mode: str) -> str | dict | None:
+        """
+        Show New Game / Load Save screen for a game mode.
+
+        Returns:
+            "new"  — start a new game
+            dict   — a loaded save (from load_game)
+            None   — user pressed back / ESC
+        """
+        clock = pygame.time.Clock()
+        frame = 0
+
+        while True:
+            # Refresh save list each loop iteration (in case of deletion)
+            saves = list_saves(mode)
+
+            # Build buttons
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
+            btn_w, btn_h = 420, 45
+            list_top = cy - 80
+            max_visible = min(8, (config.WINDOW_HEIGHT - list_top - 140) // 50)
+
+            new_btn = Button(
+                cx - btn_w // 2, list_top - 80, btn_w, btn_h, "New Game",
+                color=(40, 70, 50), hover_color=(55, 100, 65),
+            )
+            back_btn = Button(
+                cx - 80, config.WINDOW_HEIGHT - 70, 160, 40, "Back",
+                color=(65, 40, 40), hover_color=(90, 50, 50),
+            )
+
+            # Inner event/draw loop (breaks on save list change)
+            scroll_offset = 0
+            redraw = True
+
+            while redraw:
+                mouse_pos = pygame.mouse.get_pos()
+                frame += 1
+
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        return None
+                    if self._handle_window_event(event):
+                        break  # rebuild buttons
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                        return None
+
+                    if event.type == pygame.MOUSEWHEEL and saves:
+                        max_scroll = max(0, len(saves) - max_visible)
+                        scroll_offset = max(0, min(max_scroll, scroll_offset - event.y))
+
+                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        if new_btn.is_clicked(mouse_pos):
+                            return "new"
+                        if back_btn.is_clicked(mouse_pos):
+                            return None
+
+                        # Check save item clicks
+                        for i in range(min(max_visible, len(saves) - scroll_offset)):
+                            idx = i + scroll_offset
+                            item_rect = pygame.Rect(cx - btn_w // 2, list_top + i * 50, btn_w, 42)
+                            if item_rect.collidepoint(mouse_pos):
+                                from pangea.save_load import load_game
+                                return load_game(saves[idx]["filepath"])
+
+                    # Right-click to delete a save
+                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 3 and saves:
+                        for i in range(min(max_visible, len(saves) - scroll_offset)):
+                            idx = i + scroll_offset
+                            item_rect = pygame.Rect(cx - btn_w // 2, list_top + i * 50, btn_w, 42)
+                            if item_rect.collidepoint(mouse_pos):
+                                name = saves[idx]["save_name"]
+                                if self._show_confirm(f"Delete '{name}'?", "This cannot be undone."):
+                                    delete_save(saves[idx]["filepath"])
+                                    redraw = False  # break to refresh saves list
+                                break
+
+                if not redraw:
+                    break
+
+                # ── Draw ──
+                self._draw_menu_bg(frame)
+
+                # Title
+                title_text = self._mode_display_name(mode)
+                title = self.font_heading.render(title_text, True, (140, 170, 220))
+                self.surface.blit(title, title.get_rect(center=(cx, list_top - 140)))
+
+                # New Game button
+                new_btn.update(mouse_pos)
+                new_btn.draw(self.surface, self.font)
+
+                # Save list
+                if saves:
+                    hint = self.font_small.render(
+                        "Left-click: load  |  Right-click: delete  |  Scroll to see more",
+                        True, (100, 105, 130),
+                    )
+                    self.surface.blit(hint, hint.get_rect(center=(cx, list_top - 18)))
+
+                    for i in range(min(max_visible, len(saves) - scroll_offset)):
+                        idx = i + scroll_offset
+                        save = saves[idx]
+                        item_rect = pygame.Rect(cx - btn_w // 2, list_top + i * 50, btn_w, 42)
+
+                        hovered = item_rect.collidepoint(mouse_pos)
+                        bg = (45, 48, 65) if hovered else (30, 33, 48)
+                        pygame.draw.rect(self.surface, bg, item_rect, border_radius=5)
+                        pygame.draw.rect(self.surface, (60, 65, 85), item_rect, 1, border_radius=5)
+
+                        # Save name + generation info
+                        label = save["save_name"]
+                        gen_info = f"Gen {save['generation']}  |  {save['creature_count']} creatures"
+                        name_surf = self.font_subtitle.render(label, True, (200, 210, 235))
+                        info_surf = self.font_small.render(gen_info, True, (120, 130, 160))
+                        self.surface.blit(name_surf, (item_rect.x + 12, item_rect.y + 5))
+                        self.surface.blit(info_surf, (item_rect.x + 12, item_rect.y + 23))
+
+                        # Timestamp on the right
+                        ts = save.get("timestamp", "")
+                        if ts:
+                            # Format: YYYYMMDD_HHMMSS → YYYY-MM-DD HH:MM
+                            try:
+                                display_ts = f"{ts[:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                            except (IndexError, ValueError):
+                                display_ts = ts
+                            ts_surf = self.font_small.render(display_ts, True, (90, 95, 115))
+                            self.surface.blit(ts_surf, (item_rect.right - ts_surf.get_width() - 12, item_rect.y + 14))
+
+                    # Scroll indicator
+                    if len(saves) > max_visible:
+                        total = len(saves)
+                        bar_area_h = max_visible * 50
+                        bar_h = max(20, int(bar_area_h * max_visible / total))
+                        max_scroll = max(1, total - max_visible)
+                        bar_y = list_top + int((bar_area_h - bar_h) * scroll_offset / max_scroll)
+                        bar_x = cx + btn_w // 2 + 6
+                        pygame.draw.rect(self.surface, (40, 43, 58), (bar_x, list_top, 5, bar_area_h), border_radius=2)
+                        pygame.draw.rect(self.surface, (90, 100, 130), (bar_x, bar_y, 5, bar_h), border_radius=2)
+                else:
+                    no_saves = self.font_subtitle.render("No saved games yet", True, (90, 95, 115))
+                    self.surface.blit(no_saves, no_saves.get_rect(center=(cx, list_top + 30)))
+
+                # Back button
+                back_btn.update(mouse_pos)
+                back_btn.draw(self.surface, self.font)
+
+                pygame.display.flip()
+                clock.tick(30)
 
     # ── Settings Panel ──────────────────────────────────────
 
@@ -670,13 +828,15 @@ class Menu:
             ((55, 55, 55), (75, 75, 75)),
             ((65, 40, 40), (90, 50, 50)),
         ]
-        if mode in ("isolation", "freeplay"):
+        if mode in ("isolation", "freeplay", "convergence"):
             options.insert(1, "save_quit")
             labels.insert(1, "Save & Quit")
             colors.insert(1, ((50, 50, 70), (65, 65, 95)))
-            options.insert(2, "settings")
-            labels.insert(2, "Settings")
-            colors.insert(2, ((55, 55, 65), (75, 75, 90)))
+        if mode in ("isolation", "freeplay"):
+            idx = options.index("save_quit") + 1
+            options.insert(idx, "settings")
+            labels.insert(idx, "Settings")
+            colors.insert(idx, ((55, 55, 65), (75, 75, 90)))
 
         buttons = {}
         for i, (name, label) in enumerate(zip(options, labels)):

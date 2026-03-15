@@ -39,7 +39,7 @@ from pangea.evolution import (
 )
 from pangea.menu import Menu
 from pangea.renderer import Renderer
-from pangea.save_load import load_species, save_species
+from pangea.save_load import load_game, load_species, save_game, save_species
 from pangea.settings import SimSettings
 from pangea.settings_panel import SettingsPanel
 from pangea.tools import TOOL_LIST, PlayerTools
@@ -136,27 +136,77 @@ class Simulation:
 
             if choice == "quit":
                 self.running = False
-            elif choice == "isolation":
-                self._run_isolation()
-                self._active_world = None
-            elif choice == "convergence":
-                self._run_convergence()
-                self._active_world = None
-            elif choice == "freeplay":
-                self._run_freeplay()
+            elif choice in ("isolation", "convergence", "freeplay"):
+                mode_result = self.menu.show_mode_select(choice)
+                if mode_result is None:
+                    continue  # user pressed Back
+                elif mode_result == "new":
+                    # Start fresh
+                    if choice == "isolation":
+                        self._run_isolation()
+                    elif choice == "convergence":
+                        self._run_convergence()
+                    elif choice == "freeplay":
+                        self._run_freeplay()
+                elif isinstance(mode_result, dict):
+                    # Load a save
+                    save_data = mode_result
+                    loaded_settings = SimSettings.from_dict(save_data["settings"])
+                    # Keep window size from current session
+                    loaded_settings.world_width = self.settings.world_width
+                    loaded_settings.world_height = self.settings.world_height
+                    self.settings = loaded_settings
+
+                    if choice == "isolation":
+                        self._run_isolation(
+                            loaded_dna=save_data["creatures"],
+                            loaded_generation=save_data["generation"],
+                        )
+                    elif choice == "convergence":
+                        extra = save_data.get("extra") or {}
+                        self._run_convergence(
+                            loaded_dna=save_data["creatures"],
+                            loaded_generation=save_data["generation"],
+                            loaded_extra=extra,
+                        )
+                    elif choice == "freeplay":
+                        self._run_freeplay(
+                            loaded_dna=save_data["creatures"],
+                        )
                 self._active_world = None
 
         pygame.quit()
 
     # ── Isolation Mode ───────────────────────────────────────
 
-    def _run_isolation(self) -> None:
+    def _run_isolation(
+        self,
+        loaded_dna: list[DNA] | None = None,
+        loaded_generation: int = 0,
+    ) -> None:
         """Run the simulation in isolation mode (single-user evolution)."""
         self.tools = PlayerTools()
-        pop = self.settings.population_size
-        dna_list = [DNA.random() for _ in range(pop)]
+
+        if loaded_dna:
+            # Resume from save — expand loaded top performers into a full population
+            pop = self.settings.population_size
+            dna_list = create_next_generation(
+                loaded_dna,
+                population_size=pop,
+                mutation_rate=self.settings.mutation_rate,
+                mutation_strength=self.settings.mutation_strength,
+                crossover_rate=self.settings.crossover_rate,
+                min_parents=self.settings.min_population,
+                weight_clamp=self.settings.weight_clamp,
+                trait_mutation_range=self.settings.trait_mutation_range,
+            )
+            generation = loaded_generation + 1
+        else:
+            pop = self.settings.population_size
+            dna_list = [DNA.random() for _ in range(pop)]
+            generation = 1
+
         world = self._create_world(dna_list)
-        generation = 1
         world.generation = generation
 
         while self.running:
@@ -171,6 +221,14 @@ class Simulation:
                 return
             elif result == "save_quit":
                 top_dna = select_top(world.creatures, self.settings.top_performers_count, self.settings)
+                # Save full game state for resuming later
+                save_game(
+                    mode="isolation",
+                    dna_list=top_dna,
+                    generation=generation,
+                    settings_dict=self.settings.to_dict(),
+                )
+                # Also save species file for convergence mode use
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 filepath = f"species/species_{timestamp}.json"
                 save_species(top_dna, filepath, generation=generation)
@@ -235,31 +293,53 @@ class Simulation:
 
     # ── Convergence Mode ─────────────────────────────────────
 
-    def _run_convergence(self) -> None:
+    def _run_convergence(
+        self,
+        loaded_dna: list[DNA] | None = None,
+        loaded_generation: int = 0,
+        loaded_extra: dict | None = None,
+    ) -> None:
         """Run the simulation in convergence mode (two competing lineages)."""
-        result = self.menu.show_file_select()
-        if result is None:
-            return
+        if loaded_dna and loaded_extra:
+            # Resume from save — split DNA back into A and B lineages
+            file_a = loaded_extra.get("file_a", "")
+            file_b = loaded_extra.get("file_b", "")
+            a_count = loaded_extra.get("a_count", len(loaded_dna) // 2)
+            dna_a = loaded_dna[:a_count] if a_count > 0 else loaded_dna[:1]
+            dna_b = loaded_dna[a_count:] if a_count < len(loaded_dna) else loaded_dna[-1:]
 
-        file_a, file_b = result
-        try:
-            dna_a, _ = load_species(file_a)
-            dna_b, _ = load_species(file_b)
-        except Exception as exc:
-            self.menu.show_error(f"Failed to load species: {exc}")
-            return
+            a_total_food = loaded_extra.get("a_total_food", 0)
+            b_total_food = loaded_extra.get("b_total_food", 0)
+            a_survived_gens = loaded_extra.get("a_survived_gens", 0)
+            b_survived_gens = loaded_extra.get("b_survived_gens", 0)
+            a_alive = loaded_extra.get("a_alive", True)
+            b_alive = loaded_extra.get("b_alive", True)
+            generation = loaded_generation + 1
+        else:
+            result = self.menu.show_file_select()
+            if result is None:
+                return
 
-        if not dna_a or not dna_b:
-            self.menu.show_error("Species file has no creatures.")
-            return
+            file_a, file_b = result
+            try:
+                dna_a, _ = load_species(file_a)
+                dna_b, _ = load_species(file_b)
+            except Exception as exc:
+                self.menu.show_error(f"Failed to load species: {exc}")
+                return
 
-        a_total_food = 0
-        b_total_food = 0
-        a_survived_gens = 0
-        b_survived_gens = 0
-        a_alive = True
-        b_alive = True
-        generation = 1
+            if not dna_a or not dna_b:
+                self.menu.show_error("Species file has no creatures.")
+                return
+
+            a_total_food = 0
+            b_total_food = 0
+            a_survived_gens = 0
+            b_survived_gens = 0
+            a_alive = True
+            b_alive = True
+            generation = 1
+
         max_gens = self.settings.convergence_max_generations
 
         world = self._create_convergence_world(dna_a, dna_b)
@@ -269,6 +349,27 @@ class Simulation:
             result = self._run_generation(world, mode="convergence")
 
             if result == "main_menu":
+                return
+            elif result == "save_quit":
+                # Gather top DNA from each lineage
+                a_creatures = [c for c in world.creatures if c.lineage == "A"]
+                b_creatures = [c for c in world.creatures if c.lineage == "B"]
+                top_n = max(1, self.settings.top_performers_count // 2)
+                top_a = select_top(a_creatures, min(top_n, len(a_creatures)), self.settings)
+                top_b = select_top(b_creatures, min(top_n, len(b_creatures)), self.settings)
+                save_game(
+                    mode="convergence",
+                    dna_list=top_a + top_b,
+                    generation=generation,
+                    settings_dict=self.settings.to_dict(),
+                    extra={
+                        "file_a": file_a, "file_b": file_b,
+                        "a_total_food": a_total_food, "b_total_food": b_total_food,
+                        "a_survived_gens": a_survived_gens, "b_survived_gens": b_survived_gens,
+                        "a_alive": a_alive, "b_alive": b_alive,
+                        "a_count": len(top_a), "b_count": len(top_b),
+                    },
+                )
                 return
             elif result == "restart":
                 try:
@@ -371,11 +472,17 @@ class Simulation:
 
     # ── Freeplay Mode ─────────────────────────────────────────
 
-    def _run_freeplay(self) -> None:
+    def _run_freeplay(self, loaded_dna: list[DNA] | None = None) -> None:
         """Run continuous breeding mode — no generations, creatures breed in real time."""
         self.tools = PlayerTools()
-        pop = self.settings.freeplay_initial_population
-        dna_list = [DNA.random() for _ in range(pop)]
+
+        if loaded_dna:
+            # Resume from save — use loaded DNA directly as starting population
+            dna_list = loaded_dna
+        else:
+            pop = self.settings.freeplay_initial_population
+            dna_list = [DNA.random() for _ in range(pop)]
+
         world = self._create_world(dna_list)
         world.freeplay = True
         world.generation = 0
@@ -448,8 +555,15 @@ class Simulation:
                                     top_dna = [c.dna for c in sorted(
                                         alive, key=lambda c: c.food_eaten, reverse=True,
                                     )[:self.settings.top_performers_count]]
-                                    from datetime import datetime as _dt
-                                    timestamp = _dt.now().strftime("%Y%m%d_%H%M%S")
+                                    # Save full game state for resuming
+                                    save_game(
+                                        mode="freeplay",
+                                        dna_list=top_dna,
+                                        generation=0,
+                                        settings_dict=self.settings.to_dict(),
+                                    )
+                                    # Also save species file for convergence use
+                                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                                     filepath = f"species/freeplay_{timestamp}.json"
                                     save_species(top_dna, filepath, generation=0)
                                 return
