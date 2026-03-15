@@ -153,9 +153,6 @@ class Renderer:
 
         self.particles = ParticleSystem()
         self.frame = 0
-        self._world_scale = (1.0, 1.0)
-        self._need_scale = False
-
         # Selected creature for inspection
         self.selected_creature: Creature | None = None
 
@@ -266,8 +263,6 @@ class Renderer:
 
     def _begin_world_draw(self, world: World) -> None:
         """Prepare for world drawing (1:1 mapping, no scaling)."""
-        self._world_scale = (1.0, 1.0)
-        self._need_scale = False
         self.surface = self.screen
 
     def _end_world_draw(self) -> None:
@@ -327,27 +322,33 @@ class Renderer:
 
     def _draw_biomes(self, world: World) -> None:
         """Draw biome regions as semi-transparent filled circles with labels."""
+        # Use cached surfaces keyed by (biome_type, radius)
+        if not hasattr(self, "_biome_surf_cache"):
+            self._biome_surf_cache: dict[tuple[str, int], tuple[pygame.Surface, pygame.Surface]] = {}
+
         for biome in world.biomes:
             radius = int(biome.radius)
             cx, cy = int(biome.x), int(biome.y)
 
-            base_color, alpha = self._BIOME_COLORS.get(
-                biome.biome_type, (COLOR_BIOME_ROAD, 40)
-            )
-            color = (*base_color, alpha)
+            cache_key = (biome.biome_type, radius)
+            if cache_key not in self._biome_surf_cache:
+                base_color, alpha = self._BIOME_COLORS.get(
+                    biome.biome_type, (COLOR_BIOME_ROAD, 40)
+                )
+                color = (*base_color, alpha)
+                biome_surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+                pygame.draw.circle(biome_surf, color, (radius, radius), radius)
+                border_color = (*color[:3], min(255, color[3] + 30))
+                pygame.draw.circle(biome_surf, border_color, (radius, radius), radius, 2)
+                # Cache label surface too
+                label = self._BIOME_LABELS.get(biome.biome_type, biome.biome_type.upper())
+                label_color = tuple(min(255, c + 60) for c in base_color)
+                text = self.font_small.render(label, True, label_color)
+                text.set_alpha(100)
+                self._biome_surf_cache[cache_key] = (biome_surf, text)
 
-            biome_surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
-            pygame.draw.circle(biome_surf, color, (radius, radius), radius)
-            # Subtle border
-            border_color = (*color[:3], min(255, color[3] + 30))
-            pygame.draw.circle(biome_surf, border_color, (radius, radius), radius, 2)
+            biome_surf, text = self._biome_surf_cache[cache_key]
             self.surface.blit(biome_surf, (cx - radius, cy - radius))
-
-            # Biome label
-            label = self._BIOME_LABELS.get(biome.biome_type, biome.biome_type.upper())
-            label_color = tuple(min(255, c + 60) for c in base_color)
-            text = self.font_small.render(label, True, label_color)
-            text.set_alpha(100)
             self.surface.blit(text, text.get_rect(center=(cx, cy)))
 
     # ── Food ─────────────────────────────────────────────────
@@ -552,15 +553,20 @@ class Renderer:
             radius = max(2, int(creature.dna.effective_radius))
             cx, cy = int(creature.x), int(creature.y)
 
-            # Outer glow (subtle)
+            # Outer glow (subtle) — cached by (radius, color)
             glow_radius = radius + 3
             glow_color = tuple(min(255, c + 30) for c in color)
-            glow_surf = pygame.Surface((glow_radius * 2 + 4, glow_radius * 2 + 4), pygame.SRCALPHA)
-            pygame.draw.circle(
-                glow_surf, (*glow_color, 35),
-                (glow_radius + 2, glow_radius + 2), glow_radius,
-            )
-            self.surface.blit(glow_surf, (cx - glow_radius - 2, cy - glow_radius - 2))
+            glow_key = (glow_radius, glow_color)
+            if not hasattr(self, "_creature_glow_cache"):
+                self._creature_glow_cache: dict[tuple, pygame.Surface] = {}
+            if glow_key not in self._creature_glow_cache:
+                glow_surf = pygame.Surface((glow_radius * 2 + 4, glow_radius * 2 + 4), pygame.SRCALPHA)
+                pygame.draw.circle(
+                    glow_surf, (*glow_color, 35),
+                    (glow_radius + 2, glow_radius + 2), glow_radius,
+                )
+                self._creature_glow_cache[glow_key] = glow_surf
+            self.surface.blit(self._creature_glow_cache[glow_key], (cx - glow_radius - 2, cy - glow_radius - 2))
 
             # Body (with slight rim lighting)
             pygame.draw.circle(self.surface, color, (cx, cy), radius)
@@ -1388,9 +1394,7 @@ class Renderer:
             return
 
         dna = creature.dna
-        # Convert world coords to screen coords
-        scx, scy = self._world_scale
-        cx, cy = int(creature.x / scx), int(creature.y / scy)
+        cx, cy = int(creature.x), int(creature.y)
 
         # Selection ring around the creature
         radius = max(2, int(dna.effective_radius))

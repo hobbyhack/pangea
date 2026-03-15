@@ -65,6 +65,7 @@ class Creature:
         self.lineage = lineage  # "" for isolation, "A" or "B" for convergence
         self.last_turn = 0.0  # absolute radians turned last frame
         self.under_attack = 0.0  # 0.0 = safe, 1.0 = taking damage this frame
+        self.death_processed = False  # True once scavenger rewards have been given
         self.territory_cells: set[tuple[int, int]] = set()  # visited grid cells
 
         # Freeplay breeding state
@@ -117,6 +118,8 @@ class Creature:
         """
         best_dist = float("inf")
         best_angle = 0.0
+        half_w = world_width * 0.5
+        half_h = world_height * 0.5
 
         for target in targets:
             if skip_self and (target is self or not target.alive):
@@ -126,9 +129,9 @@ class Creature:
             dy = target.y - self.y
 
             if wrap:
-                if abs(dx) > world_width / 2:
+                if abs(dx) > half_w:
                     dx -= math.copysign(world_width, dx)
-                if abs(dy) > world_height / 2:
+                if abs(dy) > half_h:
                     dy -= math.copysign(world_height, dy)
 
             dist = math.sqrt(dx * dx + dy * dy)

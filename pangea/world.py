@@ -221,7 +221,6 @@ class World:
         for _ in range(self.settings.predator_count):
             self.predators.append(self._spawn_predator())
         self._predator_respawn_timer = 0.0
-        self._prev_alive_ids: set[int] = set()
 
         # Spawn initial food
         initial = self.settings.initial_food_count
@@ -462,6 +461,8 @@ class World:
     def check_collisions(self) -> None:
         """Check and handle creature-food collisions."""
         wrap = self.settings.world_wrap
+        half_w = self.width * 0.5
+        half_h = self.height * 0.5
         for creature in self.creatures:
             if not creature.alive:
                 continue
@@ -479,9 +480,9 @@ class World:
                 dy = creature.y - food.y
 
                 if wrap:
-                    if abs(dx) > self.width / 2:
+                    if abs(dx) > half_w:
                         dx -= math.copysign(self.width, dx)
-                    if abs(dy) > self.height / 2:
+                    if abs(dy) > half_h:
                         dy -= math.copysign(self.height, dy)
 
                 dist = math.sqrt(dx * dx + dy * dy)
@@ -636,10 +637,14 @@ class World:
         # Spawn food
         self.spawn_food(dt)
 
-        # Age food and remove expired items
+        # Age food and remove expired items (only rebuild list when needed)
+        has_expiry = False
         for food in self.food:
             food.age += dt
-        self.food = [f for f in self.food if f.lifetime <= 0 or f.age < f.lifetime]
+            if food.lifetime > 0 and food.age >= food.lifetime:
+                has_expiry = True
+        if has_expiry:
+            self.food = [f for f in self.food if f.lifetime <= 0 or f.age < f.lifetime]
 
         # Update player tools (age zones/barriers)
         if self.tools:
@@ -658,12 +663,14 @@ class World:
             if not creature.alive:
                 continue
 
-            # Compute biome info at creature's position
-            speed_mult = self.get_speed_multiplier(creature.x, creature.y)
+            # Compute biome info at creature's position (single lookup)
             biome = self.get_biome_at(creature.x, creature.y)
-            biome_danger = 0.0
             if biome is not None:
+                speed_mult = biome.speed_multiplier
                 biome_danger = BIOME_ENERGY_DRAIN.get(biome.biome_type, 0.0)
+            else:
+                speed_mult = 1.0
+                biome_danger = 0.0
 
             # Sense the environment (including predators and biome)
             inputs = creature.sense(
@@ -711,11 +718,11 @@ class World:
         self._check_carnivore_attacks(dt)
 
         # Update predators (blocked from mountain biomes)
+        blocked_biomes = [b for b in self.biomes if b.biome_type in BIOME_PREDATOR_BLOCKED]
         for predator in self.predators:
             predator.update(self.creatures, dt, self.width, self.height)
             # Push predators out of blocked biomes
-            for biome in self.biomes:
-                if biome.biome_type in BIOME_PREDATOR_BLOCKED:
+            for biome in blocked_biomes:
                     dx = predator.x - biome.x
                     dy = predator.y - biome.y
                     dist = math.sqrt(dx * dx + dy * dy)
@@ -740,10 +747,11 @@ class World:
         # Collect newly dead after all damage (predator + carnivore + hazard)
         frame_dead = [
             c for c in self.creatures
-            if not c.alive and id(c) not in self._prev_alive_ids
+            if not c.alive and not c.death_processed
         ]
         self._reward_scavengers(frame_dead)
-        self._prev_alive_ids = {id(c) for c in self.creatures if not c.alive}
+        for c in frame_dead:
+            c.death_processed = True
 
         # Bonus food spawning in forest biomes
         for biome in self.biomes:
