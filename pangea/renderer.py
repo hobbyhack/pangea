@@ -916,17 +916,8 @@ class Renderer:
         mode: str,
         generation_history: list[dict],
     ) -> None:
-        """
-        Draw a side panel showing a creature minimap and trait evolution graphs.
-
-        Args:
-            world: Current world state.
-            mode: "isolation" or "convergence".
-            generation_history: List of dicts with keys:
-                gen, avg_speed, avg_size, avg_vision, avg_efficiency, avg_lifespan,
-                avg_food, alive_pct
-        """
-        panel_w = 320
+        """Draw the evolution/species tracker side panel."""
+        panel_w = 340
         panel_h = config.WINDOW_HEIGHT - 20
         panel_x = config.WINDOW_WIDTH - panel_w - 10
         panel_y = 10
@@ -934,13 +925,365 @@ class Renderer:
         # Semi-transparent panel background
         panel = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
         panel.fill((10, 12, 25, 210))
-        # Border
         pygame.draw.rect(panel, (50, 55, 80), (0, 0, panel_w, panel_h), 1, border_radius=6)
         self.surface.blit(panel, (panel_x, panel_y))
 
+        if mode == "freeplay":
+            self._draw_freeplay_evolution_panel(
+                world, panel_x, panel_y, panel_w, panel_h, generation_history,
+            )
+        else:
+            self._draw_isolation_evolution_panel(
+                world, mode, panel_x, panel_y, panel_w, panel_h, generation_history,
+            )
+
+    def _draw_freeplay_evolution_panel(
+        self,
+        world: World,
+        panel_x: int,
+        panel_y: int,
+        panel_w: int,
+        panel_h: int,
+        history: list[dict],
+    ) -> None:
+        """Draw the freeplay species tracker panel with per-diet stats and graphs."""
+        y = panel_y + 8
+
+        # ── Title ──
+        title = self.font_large.render("Species Tracker", True, (140, 180, 255))
+        self.surface.blit(title, (panel_x + 12, y))
+        y += 28
+
+        alive = [c for c in world.creatures if c.alive]
+
+        # ── Minimap (compact) ──
+        map_x = panel_x + 12
+        map_w = panel_w - 24
+        map_h = 100
+        pygame.draw.rect(self.surface, (20, 22, 35), (map_x, y, map_w, map_h), border_radius=4)
+        pygame.draw.rect(self.surface, (40, 45, 60), (map_x, y, map_w, map_h), 1, border_radius=4)
+
+        sx = map_w / max(world.width, 1)
+        sy = map_h / max(world.height, 1)
+        for food in world.food:
+            fx = map_x + int(food.x * sx)
+            fy = y + int(food.y * sy)
+            pygame.draw.circle(self.surface, (40, 140, 40), (fx, fy), 1)
+        for creature in world.creatures:
+            if not creature.alive:
+                continue
+            cx = map_x + int(creature.x * sx)
+            cy = y + int(creature.y * sy)
+            color = self._creature_color(creature, "freeplay")
+            r = max(2, int(creature.dna.effective_radius * sx * 2))
+            pygame.draw.circle(self.surface, color, (cx, cy), r)
+
+        label = self.font_small.render(
+            f"{world.alive_count()} alive", True, (120, 130, 160),
+        )
+        self.surface.blit(label, (map_x + map_w - label.get_width(), y + map_h + 2))
+        y += map_h + 18
+
+        # ── Per-Species Cards ──
+        by_diet: dict[int, list] = {0: [], 1: [], 2: []}
+        for c in alive:
+            by_diet.setdefault(c.dna.diet, []).append(c)
+
+        diet_info = [
+            (0, "Herbivore", config.COLOR_HERBIVORE, world.settings.herbivore),
+            (1, "Carnivore", config.COLOR_CARNIVORE, world.settings.carnivore),
+            (2, "Scavenger", config.COLOR_SCAVENGER, world.settings.scavenger),
+        ]
+
+        trait_colors = [
+            (80, 200, 255), (255, 140, 60), (180, 100, 255),
+            (100, 255, 120), (220, 200, 60),
+        ]
+        max_pts = EVOLUTION_POINTS * 0.6
+
+        for diet_id, name, color, ds in diet_info:
+            creatures = by_diet.get(diet_id, [])
+            n = len(creatures)
+
+            # Card background
+            card_h = 72
+            card_bg = pygame.Surface((panel_w - 24, card_h), pygame.SRCALPHA)
+            card_bg.fill((20, 22, 35, 180))
+            self.surface.blit(card_bg, (panel_x + 12, y))
+            pygame.draw.rect(
+                self.surface, color,
+                (panel_x + 12, y, 3, card_h),  # left color accent
+            )
+
+            # Header: Name + count/cap
+            header = self.font.render(
+                f"{name}  {n}/{ds.freeplay_hard_cap}", True, color,
+            )
+            self.surface.blit(header, (panel_x + 20, y + 3))
+
+            if n > 0:
+                avg_gen = sum(c.generation for c in creatures) / n
+                avg_food = sum(c.food_eaten for c in creatures) / n
+                avg_energy = sum(c.energy for c in creatures) / n
+                avg_age = sum(c.age for c in creatures) / n
+                avg_offspring = sum(c.offspring_count for c in creatures) / n
+
+                # Stats row 1: Gen, Food, Energy
+                row1 = (
+                    f"Gen:{avg_gen:.1f}  Food:{avg_food:.1f}"
+                    f"  Energy:{avg_energy:.0f}  Age:{avg_age:.0f}s"
+                )
+                txt = self.font_small.render(row1, True, (160, 170, 190))
+                self.surface.blit(txt, (panel_x + 20, y + 21))
+
+                # Stats row 2: Offspring
+                row2 = f"Offspring:{avg_offspring:.1f}"
+                txt2 = self.font_small.render(row2, True, (140, 150, 170))
+                self.surface.blit(txt2, (panel_x + 20, y + 35))
+
+                # Mini trait bars (compact, inline)
+                bar_x = panel_x + 20
+                bar_y_start = y + 52
+                bar_w = (panel_w - 44) // 5 - 2
+                trait_vals = [
+                    sum(c.dna.speed for c in creatures) / n,
+                    sum(c.dna.size for c in creatures) / n,
+                    sum(c.dna.vision for c in creatures) / n,
+                    sum(c.dna.efficiency for c in creatures) / n,
+                    sum(c.dna.lifespan for c in creatures) / n,
+                ]
+                trait_labels = ["S", "Z", "V", "E", "L"]
+                for i, (val, tc, tl) in enumerate(zip(trait_vals, trait_colors, trait_labels)):
+                    bx = bar_x + i * (bar_w + 2)
+                    # Label
+                    lb = self.font_small.render(tl, True, tc)
+                    self.surface.blit(lb, (bx, bar_y_start - 1))
+                    # Bar bg
+                    bbx = bx + 10
+                    pygame.draw.rect(
+                        self.surface, (30, 32, 45),
+                        (bbx, bar_y_start + 2, bar_w - 12, 7), border_radius=2,
+                    )
+                    fill_w = max(1, int((bar_w - 12) * min(val / max_pts, 1.0)))
+                    pygame.draw.rect(
+                        self.surface, tc,
+                        (bbx, bar_y_start + 2, fill_w, 7), border_radius=2,
+                    )
+            else:
+                extinct_lbl = self.font_small.render(
+                    "EXTINCT", True, (120, 60, 60),
+                )
+                self.surface.blit(extinct_lbl, (panel_x + 20, y + 28))
+
+            y += card_h + 6
+
+        # ── Avg Generation Graph (per-diet) ──
+        if len(history) >= 2:
+            graph_x = panel_x + 12
+            graph_w = panel_w - 24
+            graph_h = 70
+
+            graph_label = self.font.render("Avg Generation", True, (180, 200, 230))
+            self.surface.blit(graph_label, (graph_x, y))
+            y += 20
+
+            pygame.draw.rect(
+                self.surface, (20, 22, 35),
+                (graph_x, y, graph_w, graph_h), border_radius=4,
+            )
+            pygame.draw.rect(
+                self.surface, (40, 45, 60),
+                (graph_x, y, graph_w, graph_h), 1, border_radius=4,
+            )
+
+            n_pts = len(history)
+            x_step = graph_w / max(n_pts - 1, 1)
+
+            # Collect all per-diet avg_gen values
+            diet_gen_keys = [
+                ("herb_stats", config.COLOR_HERBIVORE),
+                ("carn_stats", config.COLOR_CARNIVORE),
+                ("scav_stats", config.COLOR_SCAVENGER),
+            ]
+            # Also draw overall avg_gen
+            all_gen_vals = [h.get("avg_gen", 0) for h in history]
+            y_max_gen = max(max(all_gen_vals), 1) * 1.1
+
+            # Check per-diet stats exist
+            has_diet_stats = "herb_stats" in history[-1]
+            if has_diet_stats:
+                for stats_key, _ in diet_gen_keys:
+                    vals = [h.get(stats_key, {}).get("avg_gen", 0) for h in history]
+                    y_max_gen = max(y_max_gen, max(vals) * 1.1 if vals else 1)
+
+            # Gridlines
+            for i in range(1, 3):
+                gy = y + int(graph_h * i / 3)
+                pygame.draw.line(
+                    self.surface, (30, 35, 50),
+                    (graph_x, gy), (graph_x + graph_w, gy),
+                )
+
+            # Overall avg gen line
+            overall_pts = []
+            for i, h in enumerate(history):
+                px = graph_x + int(i * x_step)
+                py = y + graph_h - int(h.get("avg_gen", 0) / y_max_gen * graph_h)
+                py = max(y, min(y + graph_h, py))
+                overall_pts.append((px, py))
+            if len(overall_pts) >= 2:
+                pygame.draw.lines(
+                    self.surface, (100, 120, 160), False, overall_pts, 1,
+                )
+
+            # Per-diet avg gen lines
+            if has_diet_stats:
+                for stats_key, color in diet_gen_keys:
+                    pts = []
+                    for i, h in enumerate(history):
+                        val = h.get(stats_key, {}).get("avg_gen", 0)
+                        px = graph_x + int(i * x_step)
+                        py = y + graph_h - int(val / y_max_gen * graph_h)
+                        py = max(y, min(y + graph_h, py))
+                        pts.append((px, py))
+                    if len(pts) >= 2:
+                        pygame.draw.lines(self.surface, color, False, pts, 2)
+
+            # Y-axis max
+            max_lbl = self.font_small.render(f"G{int(y_max_gen)}", True, (90, 95, 110))
+            self.surface.blit(max_lbl, (graph_x, y - 2))
+
+            y += graph_h + 6
+
+            # ── Population History Graph ──
+            pop_graph_h = 70
+            pop_label = self.font.render("Population", True, (180, 200, 230))
+            self.surface.blit(pop_label, (graph_x, y))
+            y += 20
+
+            pygame.draw.rect(
+                self.surface, (20, 22, 35),
+                (graph_x, y, graph_w, pop_graph_h), border_radius=4,
+            )
+            pygame.draw.rect(
+                self.surface, (40, 45, 60),
+                (graph_x, y, graph_w, pop_graph_h), 1, border_radius=4,
+            )
+
+            for i in range(1, 3):
+                gy = y + int(pop_graph_h * i / 3)
+                pygame.draw.line(
+                    self.surface, (30, 35, 50),
+                    (graph_x, gy), (graph_x + graph_w, gy),
+                )
+
+            pop_vals = [h["population"] for h in history]
+            y_max_pop = max(max(pop_vals), 1) * 1.1
+
+            # Total population line
+            pop_points = []
+            for i, h in enumerate(history):
+                px = graph_x + int(i * x_step)
+                py = y + pop_graph_h - int(h["population"] / y_max_pop * pop_graph_h)
+                py = max(y, min(y + pop_graph_h, py))
+                pop_points.append((px, py))
+            if len(pop_points) >= 2:
+                pygame.draw.lines(self.surface, (100, 220, 255), False, pop_points, 1)
+
+            # Per-diet population lines
+            diet_pop_keys = [
+                ("herbivores", config.COLOR_HERBIVORE),
+                ("carnivores", config.COLOR_CARNIVORE),
+                ("scavengers", config.COLOR_SCAVENGER),
+            ]
+            for key, color in diet_pop_keys:
+                pts = []
+                for i, h in enumerate(history):
+                    px = graph_x + int(i * x_step)
+                    py = y + pop_graph_h - int(h[key] / y_max_pop * pop_graph_h)
+                    py = max(y, min(y + pop_graph_h, py))
+                    pts.append((px, py))
+                if len(pts) >= 2:
+                    pygame.draw.lines(self.surface, color, False, pts, 2)
+
+            # Y-axis max
+            max_lbl = self.font_small.render(f"{int(y_max_pop)}", True, (90, 95, 110))
+            self.surface.blit(max_lbl, (graph_x, y - 2))
+
+            y += pop_graph_h + 6
+
+            # ── Birth/Death Rate Graph ──
+            rate_h = 60
+            rate_label = self.font.render("Birth / Death Rate", True, (180, 200, 230))
+            self.surface.blit(rate_label, (graph_x, y))
+            y += 20
+
+            pygame.draw.rect(
+                self.surface, (20, 22, 35),
+                (graph_x, y, graph_w, rate_h), border_radius=4,
+            )
+            pygame.draw.rect(
+                self.surface, (40, 45, 60),
+                (graph_x, y, graph_w, rate_h), 1, border_radius=4,
+            )
+
+            birth_vals = [h["births_per_min"] for h in history]
+            death_vals = [h["deaths_per_min"] for h in history]
+            y_max_rate = max(max(birth_vals), max(death_vals), 1) * 1.1
+
+            birth_points = []
+            death_points = []
+            for i, h in enumerate(history):
+                px = graph_x + int(i * x_step)
+                by = y + rate_h - int(h["births_per_min"] / y_max_rate * rate_h)
+                by = max(y, min(y + rate_h, by))
+                birth_points.append((px, by))
+                dy = y + rate_h - int(h["deaths_per_min"] / y_max_rate * rate_h)
+                dy = max(y, min(y + rate_h, dy))
+                death_points.append((px, dy))
+            if len(birth_points) >= 2:
+                pygame.draw.lines(self.surface, (80, 255, 120), False, birth_points, 2)
+            if len(death_points) >= 2:
+                pygame.draw.lines(self.surface, (255, 90, 90), False, death_points, 2)
+
+            # Rate legend (compact)
+            y += rate_h + 4
+            pygame.draw.rect(self.surface, (80, 255, 120), (graph_x, y + 2, 8, 8))
+            lbl = self.font_small.render("Birth", True, (140, 150, 170))
+            self.surface.blit(lbl, (graph_x + 12, y))
+            pygame.draw.rect(self.surface, (255, 90, 90), (graph_x + 55, y + 2, 8, 8))
+            lbl = self.font_small.render("Death", True, (140, 150, 170))
+            self.surface.blit(lbl, (graph_x + 67, y))
+
+            # Time range
+            t_start = history[0]["time"]
+            t_end = history[-1]["time"]
+            time_range = self.font_small.render(
+                f"{int(t_start) // 60}:{int(t_start) % 60:02d}"
+                f" - {int(t_end) // 60}:{int(t_end) % 60:02d}",
+                True, (90, 95, 110),
+            )
+            self.surface.blit(
+                time_range,
+                (graph_x + graph_w - time_range.get_width(), y),
+            )
+
+    def _draw_isolation_evolution_panel(
+        self,
+        world: World,
+        mode: str,
+        panel_x: int,
+        panel_y: int,
+        panel_w: int,
+        panel_h: int,
+        generation_history: list[dict],
+    ) -> None:
+        """Draw evolution panel for isolation/convergence mode (original layout)."""
+        y = panel_y + 8
+
         # ── Title ──
         title = self.font_large.render("Evolution", True, (140, 180, 255))
-        self.surface.blit(title, (panel_x + 12, panel_y + 8))
+        self.surface.blit(title, (panel_x + 12, y))
 
         # ── Minimap ──
         map_x = panel_x + 12
@@ -948,38 +1291,30 @@ class Renderer:
         map_w = panel_w - 24
         map_h = 150
 
-        # Minimap background
         pygame.draw.rect(self.surface, (20, 22, 35), (map_x, map_y, map_w, map_h), border_radius=4)
         pygame.draw.rect(self.surface, (40, 45, 60), (map_x, map_y, map_w, map_h), 1, border_radius=4)
 
-        # Scale factors (world coords → minimap coords)
         sx = map_w / max(world.width, 1)
         sy = map_h / max(world.height, 1)
-
-        # Draw food dots on minimap
         for food in world.food:
             fx = map_x + int(food.x * sx)
             fy = map_y + int(food.y * sy)
             pygame.draw.circle(self.surface, (40, 140, 40), (fx, fy), 1)
-
-        # Draw creature dots on minimap
         for creature in world.creatures:
             if not creature.alive:
                 continue
             cx = map_x + int(creature.x * sx)
             cy = map_y + int(creature.y * sy)
             color = self._creature_color(creature, mode)
-            # Larger dot for bigger creatures
             r = max(2, int(creature.dna.effective_radius * sx * 2))
             pygame.draw.circle(self.surface, color, (cx, cy), r)
 
-        # Minimap label
         label = self.font_small.render(
             f"Minimap — {world.alive_count()} alive", True, (120, 130, 160),
         )
         self.surface.blit(label, (map_x, map_y + map_h + 4))
 
-        # ── Current Population Trait Averages (bar chart) ──
+        # ── Avg Traits Bar Chart ──
         bar_y = map_y + map_h + 26
         bar_label = self.font.render("Avg Traits (this gen)", True, (180, 200, 230))
         self.surface.blit(bar_label, (panel_x + 12, bar_y))
@@ -1002,203 +1337,27 @@ class Renderer:
             ("EFF", avg_eff, (100, 255, 120)),
             ("LIF", avg_life, (220, 200, 60)),
         ]
-        max_pts = EVOLUTION_POINTS * 0.6  # scale bar — rarely above 60% of budget
+        max_pts = EVOLUTION_POINTS * 0.6
         bar_w_max = panel_w - 80
         for name, val, color in traits:
-            # Label
             lbl = self.font_small.render(f"{name}", True, color)
             self.surface.blit(lbl, (panel_x + 12, bar_y))
-            # Bar background
             bx = panel_x + 50
             pygame.draw.rect(
                 self.surface, (30, 32, 45),
                 (bx, bar_y + 2, bar_w_max, 12), border_radius=3,
             )
-            # Bar fill
             fill_w = max(1, int(bar_w_max * min(val / max_pts, 1.0)))
             pygame.draw.rect(
                 self.surface, color,
                 (bx, bar_y + 2, fill_w, 12), border_radius=3,
             )
-            # Value
             val_text = self.font_small.render(f"{val:.0f}", True, (160, 170, 190))
             self.surface.blit(val_text, (bx + bar_w_max + 4, bar_y))
             bar_y += 20
 
         # ── History Graphs ──
-        if mode == "freeplay" and len(generation_history) >= 2:
-            # Population over time graph
-            graph_y = bar_y + 16
-            graph_label = self.font.render("Population History", True, (180, 200, 230))
-            self.surface.blit(graph_label, (panel_x + 12, graph_y))
-            graph_y += 24
-
-            graph_x = panel_x + 12
-            graph_w = panel_w - 24
-            graph_h = 100
-
-            # Graph background
-            pygame.draw.rect(
-                self.surface, (20, 22, 35),
-                (graph_x, graph_y, graph_w, graph_h), border_radius=4,
-            )
-            pygame.draw.rect(
-                self.surface, (40, 45, 60),
-                (graph_x, graph_y, graph_w, graph_h), 1, border_radius=4,
-            )
-
-            # Gridlines
-            for i in range(1, 4):
-                gy = graph_y + int(graph_h * i / 4)
-                pygame.draw.line(
-                    self.surface, (30, 35, 50),
-                    (graph_x, gy), (graph_x + graph_w, gy),
-                )
-
-            history = generation_history
-            n = len(history)
-            x_step = graph_w / max(n - 1, 1)
-
-            # Population line
-            pop_vals = [h["population"] for h in history]
-            y_max_pop = max(pop_vals) * 1.1 if pop_vals else 1
-            y_max_pop = max(y_max_pop, 1)
-
-            pop_points = []
-            for i, h in enumerate(history):
-                px = graph_x + int(i * x_step)
-                py = graph_y + graph_h - int(h["population"] / y_max_pop * graph_h)
-                py = max(graph_y, min(graph_y + graph_h, py))
-                pop_points.append((px, py))
-            if len(pop_points) >= 2:
-                pygame.draw.lines(self.surface, (100, 220, 255), False, pop_points, 2)
-
-            # Diet breakdown lines
-            diet_lines = [
-                ("herbivores", COLOR_HERBIVORE),
-                ("carnivores", COLOR_CARNIVORE),
-                ("scavengers", COLOR_SCAVENGER),
-            ]
-            for key, color in diet_lines:
-                pts = []
-                for i, h in enumerate(history):
-                    px = graph_x + int(i * x_step)
-                    py = graph_y + graph_h - int(h[key] / y_max_pop * graph_h)
-                    py = max(graph_y, min(graph_y + graph_h, py))
-                    pts.append((px, py))
-                if len(pts) >= 2:
-                    pygame.draw.lines(self.surface, color, False, pts, 1)
-
-            # Y-axis max label
-            max_lbl = self.font_small.render(f"{int(y_max_pop)}", True, (90, 95, 110))
-            self.surface.blit(max_lbl, (graph_x, graph_y - 2))
-
-            # Time axis labels
-            t_start = history[0]["time"]
-            t_end = history[-1]["time"]
-            t_start_lbl = self.font_small.render(
-                f"{int(t_start) // 60}m{int(t_start) % 60:02d}s", True, (90, 95, 110),
-            )
-            t_end_lbl = self.font_small.render(
-                f"{int(t_end) // 60}m{int(t_end) % 60:02d}s", True, (90, 95, 110),
-            )
-            self.surface.blit(t_start_lbl, (graph_x, graph_y + graph_h + 4))
-            self.surface.blit(
-                t_end_lbl,
-                (graph_x + graph_w - t_end_lbl.get_width(), graph_y + graph_h + 4),
-            )
-
-            # Legend
-            legend_y = graph_y + graph_h + 22
-            legend_x = panel_x + 12
-            legend_items = [
-                ("Pop", (100, 220, 255)),
-                ("Herb", COLOR_HERBIVORE),
-                ("Carn", COLOR_CARNIVORE),
-                ("Scav", COLOR_SCAVENGER),
-            ]
-            for name, color in legend_items:
-                pygame.draw.rect(self.surface, color, (legend_x, legend_y + 2, 10, 10))
-                lbl = self.font_small.render(name, True, (140, 150, 170))
-                self.surface.blit(lbl, (legend_x + 14, legend_y))
-                legend_x += 58
-
-            # ── Birth/Death Rate Graph ──
-            rate_graph_y = legend_y + 24
-            rate_label = self.font.render("Birth / Death Rate", True, (180, 200, 230))
-            self.surface.blit(rate_label, (panel_x + 12, rate_graph_y))
-            rate_graph_y += 24
-
-            rate_graph_h = 80
-
-            # Graph background
-            pygame.draw.rect(
-                self.surface, (20, 22, 35),
-                (graph_x, rate_graph_y, graph_w, rate_graph_h), border_radius=4,
-            )
-            pygame.draw.rect(
-                self.surface, (40, 45, 60),
-                (graph_x, rate_graph_y, graph_w, rate_graph_h), 1, border_radius=4,
-            )
-
-            # Gridlines
-            for i in range(1, 4):
-                gy = rate_graph_y + int(rate_graph_h * i / 4)
-                pygame.draw.line(
-                    self.surface, (30, 35, 50),
-                    (graph_x, gy), (graph_x + graph_w, gy),
-                )
-
-            birth_vals = [h["births_per_min"] for h in history]
-            death_vals = [h["deaths_per_min"] for h in history]
-            y_max_rate = max(max(birth_vals), max(death_vals), 1) * 1.1
-
-            # Birth rate line (green)
-            birth_points = []
-            for i, h in enumerate(history):
-                px = graph_x + int(i * x_step)
-                py = rate_graph_y + rate_graph_h - int(
-                    h["births_per_min"] / y_max_rate * rate_graph_h
-                )
-                py = max(rate_graph_y, min(rate_graph_y + rate_graph_h, py))
-                birth_points.append((px, py))
-            if len(birth_points) >= 2:
-                pygame.draw.lines(self.surface, (80, 255, 120), False, birth_points, 2)
-
-            # Death rate line (red)
-            death_points = []
-            for i, h in enumerate(history):
-                px = graph_x + int(i * x_step)
-                py = rate_graph_y + rate_graph_h - int(
-                    h["deaths_per_min"] / y_max_rate * rate_graph_h
-                )
-                py = max(rate_graph_y, min(rate_graph_y + rate_graph_h, py))
-                death_points.append((px, py))
-            if len(death_points) >= 2:
-                pygame.draw.lines(self.surface, (255, 90, 90), False, death_points, 2)
-
-            # Y-axis max label
-            rate_max_lbl = self.font_small.render(
-                f"{y_max_rate:.0f}/m", True, (90, 95, 110),
-            )
-            self.surface.blit(rate_max_lbl, (graph_x, rate_graph_y - 2))
-
-            # Rate legend
-            rate_legend_y = rate_graph_y + rate_graph_h + 6
-            pygame.draw.rect(
-                self.surface, (80, 255, 120),
-                (panel_x + 12, rate_legend_y + 2, 10, 10),
-            )
-            lbl = self.font_small.render("Births/min", True, (140, 150, 170))
-            self.surface.blit(lbl, (panel_x + 26, rate_legend_y))
-            pygame.draw.rect(
-                self.surface, (255, 90, 90),
-                (panel_x + 110, rate_legend_y + 2, 10, 10),
-            )
-            lbl = self.font_small.render("Deaths/min", True, (140, 150, 170))
-            self.surface.blit(lbl, (panel_x + 124, rate_legend_y))
-
-        elif len(generation_history) >= 2:
+        if len(generation_history) >= 2:
             graph_y = bar_y + 16
             graph_label = self.font.render("Trait Evolution", True, (180, 200, 230))
             self.surface.blit(graph_label, (panel_x + 12, graph_y))
@@ -1208,7 +1367,6 @@ class Renderer:
             graph_w = panel_w - 24
             graph_h = 120
 
-            # Graph background
             pygame.draw.rect(
                 self.surface, (20, 22, 35),
                 (graph_x, graph_y, graph_w, graph_h), border_radius=4,
@@ -1218,7 +1376,6 @@ class Renderer:
                 (graph_x, graph_y, graph_w, graph_h), 1, border_radius=4,
             )
 
-            # Gridlines
             for i in range(1, 4):
                 gy = graph_y + int(graph_h * i / 4)
                 pygame.draw.line(
@@ -1230,7 +1387,6 @@ class Renderer:
             n = len(history)
             x_step = graph_w / max(n - 1, 1)
 
-            # Find y range across all traits
             all_vals = []
             for h in history:
                 all_vals.extend([
@@ -1261,7 +1417,6 @@ class Renderer:
                 if len(points) >= 2:
                     pygame.draw.lines(self.surface, color, False, points, 2)
 
-            # Generation axis labels
             gen_start = self.font_small.render(
                 f"G{history[0]['gen']}", True, (90, 95, 110),
             )
@@ -1274,7 +1429,6 @@ class Renderer:
                 (graph_x + graph_w - gen_end.get_width(), graph_y + graph_h + 4),
             )
 
-            # Legend
             legend_y = graph_y + graph_h + 22
             legend_x = panel_x + 12
             for name, (key, color) in zip(
@@ -1286,9 +1440,7 @@ class Renderer:
                 legend_x += 58
 
         # ── Stats Summary ──
-        if mode == "freeplay" and len(generation_history) >= 2:
-            summary_y = bar_y + 310
-        elif len(generation_history) >= 2:
+        if len(generation_history) >= 2:
             summary_y = bar_y + 180
         else:
             summary_y = bar_y + 16
@@ -1308,7 +1460,7 @@ class Renderer:
                 summary_y += 18
 
         # ── Species Breakdown ──
-        species_y = summary_y + 10
+        species_y = summary_y + 10 if alive else bar_y + 16
         species_label = self.font.render("Species", True, (180, 200, 230))
         self.surface.blit(species_label, (panel_x + 12, species_y))
         species_y += 24
@@ -1336,14 +1488,12 @@ class Renderer:
 
         bar_w_full = panel_w - 24
         for name, count, color in species_items:
-            # Label and count
             pct = (count / total_alive * 100) if total_alive else 0
             lbl = self.font_small.render(
                 f"{name}: {count} ({pct:.0f}%)", True, color,
             )
             self.surface.blit(lbl, (panel_x + 12, species_y))
             species_y += 16
-            # Proportion bar
             pygame.draw.rect(
                 self.surface, (30, 32, 45),
                 (panel_x + 12, species_y, bar_w_full, 8), border_radius=3,

@@ -187,3 +187,10 @@ class DNA:
             lifespan=traits[4],
             diet=diet,
         )
+
+    @classmethod
+    def random_for_diet(cls, diet: int) -> DNA:
+        """Create random DNA with a specific diet type."""
+        dna = cls.random()
+        dna.diet = diet
+        return dna

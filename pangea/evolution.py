@@ -40,7 +40,7 @@ from pangea.creature import Creature
 from pangea.dna import DNA
 
 if TYPE_CHECKING:
-    from pangea.settings import SimSettings
+    from pangea.settings import DietSettings, SimSettings
 
 
 # ── Fitness ──────────────────────────────────────────────────
@@ -358,6 +358,7 @@ def breed_creature(
     mutation_strength: float = MUTATION_STRENGTH,
     weight_clamp: float = 0.0,
     trait_mutation_range: int = TRAIT_MUTATION_RANGE,
+    diet_mutation_rate: float = 0.0,
 ) -> DNA:
     """
     Produce one offspring DNA from a single parent creature.
@@ -365,6 +366,9 @@ def breed_creature(
     Clones the parent's DNA, applies weight and trait mutation,
     and possibly mutates diet. Used in freeplay mode for individual
     continuous breeding.
+
+    Args:
+        diet_mutation_rate: Per-offspring chance to switch diet (0 = disabled).
     """
     child_weights = [w.copy() for w in parent.dna.weights]
     child_weights = mutate_weights(
@@ -372,7 +376,7 @@ def breed_creature(
     )
 
     diet = parent.dna.diet
-    if random.random() < DIET_MUTATION_RATE:
+    if diet_mutation_rate > 0 and random.random() < diet_mutation_rate:
         diet = random.choice([DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER])
 
     child_dna = DNA(

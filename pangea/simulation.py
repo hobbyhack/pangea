@@ -28,6 +28,9 @@ import pygame
 import pangea.config as config
 from pangea.config import (
     CREATURES_PER_LINEAGE,
+    DIET_CARNIVORE,
+    DIET_HERBIVORE,
+    DIET_SCAVENGER,
     FPS,
     NET_SNAPSHOT_INTERVAL,
 )
@@ -646,8 +649,12 @@ class Simulation:
             self._freeplay_history: list[dict] = []
             self._freeplay_history_timer = 0.0
         else:
-            pop = self.settings.freeplay_initial_population
-            dna_list = [DNA.random() for _ in range(pop)]
+            # Per-diet initial populations
+            dna_list = []
+            for diet in (DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER):
+                ds = self.settings.diet_settings(diet)
+                for _ in range(ds.freeplay_initial_population):
+                    dna_list.append(DNA.random_for_diet(diet))
             world = self._create_world(dna_list)
             world.freeplay = True
             world.generation = 0
@@ -839,23 +846,9 @@ class Simulation:
 
                 # Record population history snapshot every 10 seconds
                 if self._freeplay_history_timer >= 10.0:
-                    alive_creatures = [c for c in world.creatures if c.alive]
-                    n_alive = len(alive_creatures)
-                    self._freeplay_history.append({
-                        "time": self._freeplay_elapsed,
-                        "population": n_alive,
-                        "births": world.total_births,
-                        "deaths": world.total_deaths,
-                        "births_per_min": self._freeplay_births_per_min,
-                        "deaths_per_min": self._freeplay_deaths_per_min,
-                        "herbivores": sum(1 for c in alive_creatures if c.dna.diet == 0),
-                        "carnivores": sum(1 for c in alive_creatures if c.dna.diet == 1),
-                        "scavengers": sum(1 for c in alive_creatures if c.dna.diet == 2),
-                        "avg_gen": (
-                            sum(c.generation for c in alive_creatures) / n_alive
-                            if n_alive else 0
-                        ),
-                    })
+                    self._freeplay_history.append(
+                        self._build_freeplay_snapshot(world)
+                    )
                     # Keep last 360 snapshots (~1 hour at 10s intervals)
                     if len(self._freeplay_history) > 360:
                         self._freeplay_history = self._freeplay_history[-360:]
@@ -865,32 +858,64 @@ class Simulation:
                 if alive > self._freeplay_peak_pop:
                     self._freeplay_peak_pop = alive
 
-            # Check for extinction
-            if world.alive_count() == 0 and not self.paused:
-                pop = self.settings.freeplay_initial_population
-                # Carry over DNA from the best performers of the extinct population
-                top_dna = select_top(
-                    world.creatures,
-                    min(self.settings.top_performers_count, len(world.creatures)),
-                    self.settings,
+            # Check for per-diet extinction
+            if not self.paused:
+                from pangea.settings import (
+                    EXTINCTION_RESPAWN_BEST,
+                    EXTINCTION_RESPAWN_RANDOM,
                 )
-                if top_dna:
-                    dna_list = create_next_generation(
-                        top_dna,
-                        population_size=pop,
-                        mutation_rate=self.settings.mutation_rate,
-                        mutation_strength=self.settings.mutation_strength,
-                        crossover_rate=self.settings.crossover_rate,
-                        min_parents=self.settings.min_population,
-                        weight_clamp=self.settings.weight_clamp,
-                        trait_mutation_range=self.settings.trait_mutation_range,
-                    )
-                else:
-                    dna_list = [DNA.random() for _ in range(pop)]
-                world = self._create_world(dna_list)
-                world.freeplay = True
-                world.generation = 0
-                self.renderer.reset_tracking()
+                for diet in (DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER):
+                    if world.alive_count_by_diet(diet) > 0:
+                        continue
+                    ds = self.settings.diet_settings(diet)
+                    if ds.extinction_mode == EXTINCTION_RESPAWN_BEST:
+                        # Select from dead creatures of this diet
+                        diet_creatures = [
+                            c for c in world.creatures if c.dna.diet == diet
+                        ]
+                        top_dna = select_top(
+                            diet_creatures,
+                            min(ds.top_performers_count, len(diet_creatures)),
+                            self.settings,
+                        )
+                        respawn_count = ds.freeplay_initial_population
+                        if top_dna:
+                            new_dna = create_next_generation(
+                                top_dna,
+                                population_size=respawn_count,
+                                mutation_rate=ds.mutation_rate,
+                                mutation_strength=ds.mutation_strength,
+                                crossover_rate=ds.crossover_rate,
+                                min_parents=ds.min_population,
+                                weight_clamp=ds.weight_clamp,
+                                trait_mutation_range=ds.trait_mutation_range,
+                            )
+                        else:
+                            new_dna = [
+                                DNA.random_for_diet(diet)
+                                for _ in range(respawn_count)
+                            ]
+                        for dna in new_dna:
+                            dna.diet = diet  # ensure diet stays correct
+                            x = random.uniform(50, self.settings.world_width - 50)
+                            y = random.uniform(50, self.settings.world_height - 50)
+                            child = Creature(dna, x, y)
+                            child.energy = ds.freeplay_child_energy
+                            world.creatures.append(child)
+                    elif ds.extinction_mode == EXTINCTION_RESPAWN_RANDOM:
+                        respawn_count = max(1, ds.freeplay_initial_population // 2)
+                        for _ in range(respawn_count):
+                            dna = DNA.random_for_diet(diet)
+                            x = random.uniform(50, self.settings.world_width - 50)
+                            y = random.uniform(50, self.settings.world_height - 50)
+                            child = Creature(dna, x, y)
+                            child.energy = ds.freeplay_child_energy
+                            world.creatures.append(child)
+                    # EXTINCTION_PERMANENT: do nothing
+
+                # Total extinction — all species gone
+                if world.alive_count() == 0:
+                    self.renderer.reset_tracking()
 
             # Render
             self.renderer.draw(
@@ -1317,8 +1342,12 @@ class Simulation:
     def _run_host_freeplay(self) -> None:
         """Run freeplay mode as network host."""
         self.tools = PlayerTools()
-        pop = self.settings.freeplay_initial_population
-        dna_list = [DNA.random() for _ in range(pop)]
+        # Per-diet initial populations
+        dna_list = []
+        for diet in (DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER):
+            ds = self.settings.diet_settings(diet)
+            for _ in range(ds.freeplay_initial_population):
+                dna_list.append(DNA.random_for_diet(diet))
         world = self._create_world(dna_list)
         world.freeplay = True
         world.generation = 0
@@ -1499,23 +1528,9 @@ class Simulation:
                     self._freeplay_stats_timer = 0.0
 
                 if self._freeplay_history_timer >= 10.0:
-                    alive_creatures = [c for c in world.creatures if c.alive]
-                    n_alive = len(alive_creatures)
-                    self._freeplay_history.append({
-                        "time": self._freeplay_elapsed,
-                        "population": n_alive,
-                        "births": world.total_births,
-                        "deaths": world.total_deaths,
-                        "births_per_min": self._freeplay_births_per_min,
-                        "deaths_per_min": self._freeplay_deaths_per_min,
-                        "herbivores": sum(1 for c in alive_creatures if c.dna.diet == 0),
-                        "carnivores": sum(1 for c in alive_creatures if c.dna.diet == 1),
-                        "scavengers": sum(1 for c in alive_creatures if c.dna.diet == 2),
-                        "avg_gen": (
-                            sum(c.generation for c in alive_creatures) / n_alive
-                            if n_alive else 0
-                        ),
-                    })
+                    self._freeplay_history.append(
+                        self._build_freeplay_snapshot(world)
+                    )
                     if len(self._freeplay_history) > 360:
                         self._freeplay_history = self._freeplay_history[-360:]
                     self._freeplay_history_timer = 0.0
@@ -1524,29 +1539,61 @@ class Simulation:
                 if alive > self._freeplay_peak_pop:
                     self._freeplay_peak_pop = alive
 
-            # Extinction respawn
-            if world.alive_count() == 0 and not self.paused:
-                top_dna = select_top(
-                    world.creatures,
-                    min(self.settings.top_performers_count, len(world.creatures)),
-                    self.settings,
+            # Per-diet extinction handling
+            if not self.paused:
+                from pangea.settings import (
+                    EXTINCTION_RESPAWN_BEST,
+                    EXTINCTION_RESPAWN_RANDOM,
                 )
-                if top_dna:
-                    dna_list = create_next_generation(
-                        top_dna, population_size=pop,
-                        mutation_rate=self.settings.mutation_rate,
-                        mutation_strength=self.settings.mutation_strength,
-                        crossover_rate=self.settings.crossover_rate,
-                        min_parents=self.settings.min_population,
-                        weight_clamp=self.settings.weight_clamp,
-                        trait_mutation_range=self.settings.trait_mutation_range,
-                    )
-                else:
-                    dna_list = [DNA.random() for _ in range(pop)]
-                world = self._create_world(dna_list)
-                world.freeplay = True
-                world.generation = 0
-                self.renderer.reset_tracking()
+                for diet in (DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER):
+                    if world.alive_count_by_diet(diet) > 0:
+                        continue
+                    ds = self.settings.diet_settings(diet)
+                    if ds.extinction_mode == EXTINCTION_RESPAWN_BEST:
+                        diet_creatures = [
+                            c for c in world.creatures if c.dna.diet == diet
+                        ]
+                        top_dna = select_top(
+                            diet_creatures,
+                            min(ds.top_performers_count, len(diet_creatures)),
+                            self.settings,
+                        )
+                        respawn_count = ds.freeplay_initial_population
+                        if top_dna:
+                            new_dna = create_next_generation(
+                                top_dna,
+                                population_size=respawn_count,
+                                mutation_rate=ds.mutation_rate,
+                                mutation_strength=ds.mutation_strength,
+                                crossover_rate=ds.crossover_rate,
+                                min_parents=ds.min_population,
+                                weight_clamp=ds.weight_clamp,
+                                trait_mutation_range=ds.trait_mutation_range,
+                            )
+                        else:
+                            new_dna = [
+                                DNA.random_for_diet(diet)
+                                for _ in range(respawn_count)
+                            ]
+                        for dna in new_dna:
+                            dna.diet = diet
+                            x = random.uniform(50, self.settings.world_width - 50)
+                            y = random.uniform(50, self.settings.world_height - 50)
+                            child = Creature(dna, x, y)
+                            child.energy = ds.freeplay_child_energy
+                            world.creatures.append(child)
+                    elif ds.extinction_mode == EXTINCTION_RESPAWN_RANDOM:
+                        respawn_count = max(1, ds.freeplay_initial_population // 2)
+                        for _ in range(respawn_count):
+                            dna = DNA.random_for_diet(diet)
+                            x = random.uniform(50, self.settings.world_width - 50)
+                            y = random.uniform(50, self.settings.world_height - 50)
+                            child = Creature(dna, x, y)
+                            child.energy = ds.freeplay_child_energy
+                            world.creatures.append(child)
+
+                if world.alive_count() == 0:
+                    self.renderer.reset_tracking()
 
             # Broadcast snapshot
             if self._net_host and frame_counter % NET_SNAPSHOT_INTERVAL == 0:
@@ -1766,6 +1813,61 @@ class Simulation:
                         mode, world.generation, self.generation_history,
                     )
                 )
+
+    # ── Freeplay Snapshot Builder ─────────────────────────────
+
+    def _build_freeplay_snapshot(self, world: World) -> dict:
+        """Build a history snapshot with per-diet stats for the evolution panel."""
+        alive_creatures = [c for c in world.creatures if c.alive]
+        n_alive = len(alive_creatures)
+
+        # Group alive creatures by diet
+        by_diet: dict[int, list] = {0: [], 1: [], 2: []}
+        for c in alive_creatures:
+            by_diet.setdefault(c.dna.diet, []).append(c)
+
+        def _diet_stats(creatures: list) -> dict:
+            n = len(creatures)
+            if n == 0:
+                return {
+                    "count": 0, "avg_gen": 0, "avg_food": 0, "avg_energy": 0,
+                    "avg_age": 0, "avg_offspring": 0,
+                    "avg_speed": 0, "avg_size": 0, "avg_vision": 0,
+                    "avg_efficiency": 0, "avg_lifespan": 0,
+                }
+            return {
+                "count": n,
+                "avg_gen": sum(c.generation for c in creatures) / n,
+                "avg_food": sum(c.food_eaten for c in creatures) / n,
+                "avg_energy": sum(c.energy for c in creatures) / n,
+                "avg_age": sum(c.age for c in creatures) / n,
+                "avg_offspring": sum(c.offspring_count for c in creatures) / n,
+                "avg_speed": sum(c.dna.speed for c in creatures) / n,
+                "avg_size": sum(c.dna.size for c in creatures) / n,
+                "avg_vision": sum(c.dna.vision for c in creatures) / n,
+                "avg_efficiency": sum(c.dna.efficiency for c in creatures) / n,
+                "avg_lifespan": sum(c.dna.lifespan for c in creatures) / n,
+            }
+
+        return {
+            "time": self._freeplay_elapsed,
+            "population": n_alive,
+            "births": world.total_births,
+            "deaths": world.total_deaths,
+            "births_per_min": self._freeplay_births_per_min,
+            "deaths_per_min": self._freeplay_deaths_per_min,
+            "herbivores": len(by_diet[0]),
+            "carnivores": len(by_diet[1]),
+            "scavengers": len(by_diet[2]),
+            "avg_gen": (
+                sum(c.generation for c in alive_creatures) / n_alive
+                if n_alive else 0
+            ),
+            # Per-diet detailed stats
+            "herb_stats": _diet_stats(by_diet[0]),
+            "carn_stats": _diet_stats(by_diet[1]),
+            "scav_stats": _diet_stats(by_diet[2]),
+        }
 
     # ── World Creation Helpers ───────────────────────────────
 

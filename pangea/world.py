@@ -411,10 +411,10 @@ class World:
         # Apply seasonal multiplier
         multiplier *= self.seasonal_multiplier()
 
-        # Freeplay: reduce food when above carrying capacity
+        # Freeplay: reduce food when above total carrying capacity
         if self.freeplay:
             alive = self.alive_count()
-            cap = self.settings.freeplay_carrying_capacity
+            cap = self.settings.total_freeplay_carrying_capacity()
             if alive > cap:
                 multiplier *= self.settings.freeplay_overcapacity_food_penalty
 
@@ -800,29 +800,41 @@ class World:
         """
         Check all living creatures for breeding eligibility.
 
+        Uses per-diet settings for breeding thresholds and population caps.
         Eligible creatures produce one mutated offspring nearby.
         Returns list of newly spawned children.
         """
         from pangea.evolution import breed_creature
+        from pangea.config import DIET_HERBIVORE, DIET_CARNIVORE, DIET_SCAVENGER
 
-        alive = self.alive_count()
-        hard_cap = self.settings.freeplay_hard_cap
-        if alive >= hard_cap:
-            return []
+        # Pre-compute per-diet alive counts
+        diet_alive = {
+            DIET_HERBIVORE: self.alive_count_by_diet(DIET_HERBIVORE),
+            DIET_CARNIVORE: self.alive_count_by_diet(DIET_CARNIVORE),
+            DIET_SCAVENGER: self.alive_count_by_diet(DIET_SCAVENGER),
+        }
+        # Track new children per diet for cap enforcement
+        diet_new = {DIET_HERBIVORE: 0, DIET_CARNIVORE: 0, DIET_SCAVENGER: 0}
 
         new_children: list[Creature] = []
         for creature in list(self.creatures):
-            if not creature.can_breed(self.settings):
+            diet = creature.dna.diet
+            ds = self.settings.diet_settings(diet)
+
+            if not creature.can_breed(ds):
                 continue
-            if alive + len(new_children) >= hard_cap:
-                break
+
+            # Per-diet hard cap check
+            if diet_alive[diet] + diet_new[diet] >= ds.freeplay_hard_cap:
+                continue
 
             child_dna = breed_creature(
                 creature,
-                mutation_rate=self.settings.mutation_rate,
-                mutation_strength=self.settings.mutation_strength,
-                weight_clamp=self.settings.weight_clamp,
-                trait_mutation_range=self.settings.trait_mutation_range,
+                mutation_rate=ds.mutation_rate,
+                mutation_strength=ds.mutation_strength,
+                weight_clamp=ds.weight_clamp,
+                trait_mutation_range=ds.trait_mutation_range,
+                diet_mutation_rate=ds.diet_mutation_rate,
             )
 
             # Spawn child near parent
@@ -834,14 +846,18 @@ class World:
             cy = max(10, min(self.height - 10, cy))
 
             child = Creature(child_dna, cx, cy, lineage=creature.lineage)
-            child.energy = self.settings.freeplay_child_energy
+            child.energy = ds.freeplay_child_energy
             child.generation = creature.generation + 1
 
             # Deduct cost and set cooldown on parent
-            creature.energy -= self.settings.freeplay_breed_energy_cost
-            creature.breed_cooldown = self.settings.freeplay_breed_cooldown
+            creature.energy -= ds.freeplay_breed_energy_cost
+            creature.breed_cooldown = ds.freeplay_breed_cooldown
             creature.offspring_count += 1
 
+            # Track new child's diet (may differ from parent if diet mutated)
+            child_diet = child_dna.diet
+            if child_diet in diet_new:
+                diet_new[child_diet] += 1
             new_children.append(child)
 
         self.creatures.extend(new_children)
@@ -872,6 +888,10 @@ class World:
     def alive_count(self) -> int:
         """Return the number of living creatures."""
         return sum(1 for c in self.creatures if c.alive)
+
+    def alive_count_by_diet(self, diet: int) -> int:
+        """Return the number of living creatures with a specific diet."""
+        return sum(1 for c in self.creatures if c.alive and c.dna.diet == diet)
 
     def alive_count_by_lineage(self, lineage: str) -> int:
         """Return the number of living creatures in a specific lineage."""

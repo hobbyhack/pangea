@@ -14,7 +14,12 @@ from pathlib import Path
 import pygame
 
 import pangea.config as config
-from pangea.settings import SETTING_DEFS, SimSettings
+from pangea.settings import (
+    DIET_SETTING_DEFS,
+    EXTINCTION_MODES,
+    SETTING_DEFS,
+    SimSettings,
+)
 
 
 # ── Constants ────────────────────────────────────────────────
@@ -73,7 +78,7 @@ class SettingsPanel:
         self._sliders = []
         y = 0
         last_cat = ""
-        for sdef in SETTING_DEFS:
+        for sdef in list(SETTING_DEFS) + DIET_SETTING_DEFS:
             if sdef.category != last_cat:
                 last_cat = sdef.category
                 y += 8  # category gap
@@ -84,6 +89,25 @@ class SettingsPanel:
             })
             y += ROW_HEIGHT
         self._content_height = y
+
+    # ── Per-diet value helpers ─────────────────────────────────
+
+    @staticmethod
+    def _get_val(settings: SimSettings, sdef) -> float:
+        """Get a setting value, routing to DietSettings when sdef.diet is set."""
+        if sdef.diet is not None:
+            ds = settings.diet_settings(sdef.diet)
+            return getattr(ds, sdef.key)
+        return getattr(settings, sdef.key)
+
+    @staticmethod
+    def _set_val(settings: SimSettings, sdef, value) -> None:
+        """Set a setting value, routing to DietSettings when sdef.diet is set."""
+        if sdef.diet is not None:
+            ds = settings.diet_settings(sdef.diet)
+            setattr(ds, sdef.key, value)
+        else:
+            setattr(settings, sdef.key, value)
 
     # ── Public API ────────────────────────────────────────────
 
@@ -159,8 +183,20 @@ class SettingsPanel:
                 if sdef.widget_type == "toggle":
                     toggle_rect = pygame.Rect(px + PANEL_WIDTH - 80, draw_y, 50, 24)
                     if toggle_rect.collidepoint(mx, my):
-                        cur = getattr(settings, sdef.key)
-                        setattr(settings, sdef.key, not cur)
+                        cur = self._get_val(settings, sdef)
+                        self._set_val(settings, sdef, not cur)
+                        return settings
+                elif sdef.widget_type == "select":
+                    select_rect = pygame.Rect(px + PANEL_WIDTH - SLIDER_W - 30, draw_y, SLIDER_W + 40, ROW_HEIGHT)
+                    if select_rect.collidepoint(mx, my):
+                        cur = self._get_val(settings, sdef)
+                        # Cycle through extinction modes
+                        try:
+                            idx = EXTINCTION_MODES.index(cur)
+                        except ValueError:
+                            idx = 0
+                        idx = (idx + 1) % len(EXTINCTION_MODES)
+                        self._set_val(settings, sdef, EXTINCTION_MODES[idx])
                         return settings
                 else:
                     slider_rect = pygame.Rect(
@@ -186,7 +222,7 @@ class SettingsPanel:
             return settings
         s = self._dragging
         sdef = s["def"]
-        if sdef.widget_type == "toggle":
+        if sdef.widget_type in ("toggle", "select"):
             return settings
 
         mx = pygame.mouse.get_pos()[0]
@@ -198,7 +234,7 @@ class SettingsPanel:
         snapped = max(sdef.min_val, min(sdef.max_val, snapped))
         if sdef.step >= 1:
             snapped = int(snapped)
-        setattr(settings, sdef.key, snapped)
+        self._set_val(settings, sdef, snapped)
         return settings
 
     def consumes_click(self, mx: int, my: int) -> bool:
@@ -273,11 +309,16 @@ class SettingsPanel:
             if sdef.tooltip and label_rect.collidepoint(mouse_pos):
                 self._hovered_tooltip = sdef.tooltip
 
-            val = getattr(settings, sdef.key)
+            val = self._get_val(settings, sdef)
             sx = px + PANEL_WIDTH - SLIDER_W - 30
 
             if sdef.widget_type == "toggle":
                 self._draw_toggle(surface, px + PANEL_WIDTH - 80, draw_y + 14, bool(val))
+            elif sdef.widget_type == "select":
+                # Draw clickable label showing current mode
+                display = str(val).replace("_", " ").title()
+                sel_text = self._font_small.render(f"< {display} >", True, (140, 200, 170))
+                surface.blit(sel_text, (sx, draw_y + 14))
             else:
                 sy = draw_y + 18
                 t = (val - sdef.min_val) / (sdef.max_val - sdef.min_val) if sdef.max_val > sdef.min_val else 0

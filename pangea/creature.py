@@ -79,8 +79,13 @@ class Creature:
 
     # ── Breeding ─────────────────────────────────────────────
 
-    def can_breed(self, settings: SimSettings) -> bool:
-        """Check if this creature meets all freeplay breeding criteria."""
+    def can_breed(self, settings) -> bool:
+        """Check if this creature meets all freeplay breeding criteria.
+
+        Args:
+            settings: SimSettings or DietSettings — reads freeplay_breed_*
+                      fields which exist on both.
+        """
         return (
             self.alive
             and self.age >= settings.freeplay_breed_min_age
