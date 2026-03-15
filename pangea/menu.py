@@ -709,6 +709,29 @@ class Menu:
          "Energy spent by the parent when producing an offspring."),
         ("freeplay_child_energy", "Child Energy", 10, 200, 10, ".0f", "ss",
          "Starting energy given to a newborn creature."),
+        # Creature
+        ("base_energy", "Start Energy", 20, 500, 10, ".0f", "ss",
+         "Energy each creature starts with."),
+        ("energy_cost_per_thrust", "Move Cost", 0.01, 0.5, 0.01, ".2f", "ss",
+         "Energy drained per unit of thrust each frame."),
+        ("turn_cost", "Turn Cost", 0.0, 0.5, 0.01, ".2f", "ss",
+         "Extra energy cost for turning (0 = free turning)."),
+        ("food_heal", "Food Heal (sec)", 0.0, 10.0, 0.5, ".1f", "ss",
+         "Lifespan seconds restored per food eaten."),
+        # Night Vision
+        ("night_vision_multiplier", "Night Vision", 0.0, 1.0, 0.05, ".2f", "ss",
+         "Vision multiplier at night (1.0 = no reduction)."),
+        # Fitness
+        ("fitness_food_weight", "Food Weight", 0.0, 50.0, 1.0, ".1f", "ss",
+         "Food eaten contribution to fitness score."),
+        ("fitness_time_weight", "Survival Weight", 0.0, 5.0, 0.05, ".2f", "ss",
+         "Time alive contribution to fitness score."),
+        ("fitness_energy_weight", "Energy Weight", 0.0, 5.0, 0.05, ".2f", "ss",
+         "Remaining energy contribution to fitness score."),
+        ("territory_fitness_weight", "Territory Weight", 0.0, 5.0, 0.1, ".1f", "ss",
+         "Area explored contribution to fitness score."),
+        ("fitness_offspring_weight", "Offspring Weight", 0.0, 20.0, 0.5, ".1f", "ss",
+         "Breeding success contribution to fitness score."),
     ]
 
     # Tooltip descriptions for diet flag toggles
