@@ -245,18 +245,6 @@ def _food_to_dict(food) -> dict:
     }
 
 
-def _predator_to_dict(pred) -> dict:
-    """Serialize a Predator."""
-    return {
-        "x": pred.x, "y": pred.y,
-        "speed": pred.speed, "vision": pred.vision,
-        "damage": pred.damage, "radius": pred.radius,
-        "heading": pred.heading, "stamina": pred.stamina,
-        "chase_time": pred.chase_time, "rest_time": pred.rest_time,
-        "resting": pred.resting,
-    }
-
-
 def _hazard_to_dict(h) -> dict:
     """Serialize a Hazard."""
     return {"x": h.x, "y": h.y, "radius": h.radius,
@@ -290,7 +278,7 @@ def save_snapshot(
     save_name: str = "",
 ) -> str:
     """
-    Save a full simulation snapshot — every creature, food item, predator, etc.
+    Save a full simulation snapshot — every creature, food item, hazard, etc.
 
     Args:
         world:          The World object with all live state.
@@ -321,7 +309,6 @@ def save_snapshot(
         # World state
         "creatures": [_creature_to_dict(c) for c in world.creatures],
         "food": [_food_to_dict(f) for f in world.food],
-        "predators": [_predator_to_dict(p) for p in world.predators],
         "hazards": [_hazard_to_dict(h) for h in world.hazards],
         "biomes": [_biome_to_dict(b) for b in world.biomes],
         "world_timers": {
@@ -331,7 +318,6 @@ def save_snapshot(
             "total_births": world.total_births,
             "total_deaths": world.total_deaths,
             "food_spawn_accum": world._food_spawn_accum,
-            "predator_respawn_timer": world._predator_respawn_timer,
         },
         # Freeplay tracking
         "freeplay_state": freeplay_state,
@@ -357,9 +343,9 @@ def load_snapshot(filepath: str) -> dict:
 
     Returns:
         Dict with keys: save_name, settings, creatures (list[Creature]),
-        food, predators, hazards, biomes, world_timers, freeplay_state, tools.
+        food, hazards, biomes, world_timers, freeplay_state, tools.
     """
-    from pangea.world import Food, Hazard, Biome, Predator
+    from pangea.world import Food, Hazard, Biome
     from pangea.tools import Zone, Barrier
 
     with open(filepath, "r", encoding="utf-8") as f:
@@ -373,18 +359,6 @@ def load_snapshot(filepath: str) -> dict:
              species_id=f.get("species_id", ""))
         for f in data.get("food", [])
     ]
-
-    predators = []
-    for p in data.get("predators", []):
-        pred = Predator(
-            x=p["x"], y=p["y"], speed=p["speed"], vision=p["vision"],
-            damage=p["damage"], radius=p["radius"], stamina=p.get("stamina", 0),
-        )
-        pred.heading = p["heading"]
-        pred.chase_time = p.get("chase_time", 0.0)
-        pred.rest_time = p.get("rest_time", 0.0)
-        pred.resting = p.get("resting", False)
-        predators.append(pred)
 
     hazards = [
         Hazard(x=h["x"], y=h["y"], radius=h["radius"],
@@ -421,7 +395,6 @@ def load_snapshot(filepath: str) -> dict:
         "settings": data.get("settings", {}),
         "creatures": creatures,
         "food": food,
-        "predators": predators,
         "hazards": hazards,
         "biomes": biomes,
         "world_timers": data.get("world_timers", {}),

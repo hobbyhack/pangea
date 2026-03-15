@@ -9,7 +9,7 @@ Architecture:
 
 Inputs:  [food_distance, food_angle, wall_distance, energy_level,
           nearest_creature_distance, nearest_creature_angle, own_speed,
-          predator_distance, predator_angle, under_attack,
+          threat_distance, threat_angle, under_attack,
           biome_speed, biome_danger]
 Outputs: [turn_angle, thrust]
 """

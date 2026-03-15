@@ -73,7 +73,7 @@ EFFICIENCY_SCALE = 0.02      # 25 pts → efficiency 1.0 (neutral)
 # ── Neural Network ───────────────────────────────────────────
 NN_INPUT_SIZE = 12           # Inputs: food dist, food angle, wall dist, energy,
                              #         nearest creature dist, nearest creature angle,
-                             #         own speed, predator dist, predator angle,
+                             #         own speed, threat dist, threat angle,
                              #         under_attack, biome_speed, biome_danger
 NN_HIDDEN_SIZE = 8           # Hidden layer neurons
 NN_OUTPUT_SIZE = 2           # Outputs: turn angle, thrust
@@ -119,8 +119,6 @@ BIOME_ENERGY_DRAIN = {       # Extra energy drain per second inside biome
 BIOME_FOOD_MULTIPLIER = {    # Food spawn rate multiplier inside biome
     "forest": 2.0,
 }
-BIOME_PREDATOR_BLOCKED = {"mountain"}  # Predators cannot enter these biomes
-
 # ── Territory ──────────────────────────────────────────────
 TERRITORY_GRID_SIZE = 80           # Pixels per territory grid cell
 
@@ -133,14 +131,6 @@ COLOR_BUTTON = (50, 60, 90)
 COLOR_BUTTON_HOVER = (70, 85, 130)
 COLOR_BUTTON_TEXT = (230, 230, 240)
 
-# ── Predators ───────────────────────────────────────────────
-PREDATOR_COUNT = 2               # Number of NPC predators in the world
-PREDATOR_SPEED = 2.0             # Predator movement speed (px/frame)
-PREDATOR_VISION = 150.0          # How far predators can detect creatures (px)
-PREDATOR_DAMAGE = 5.0            # Energy drained per second on contact
-PREDATOR_RADIUS = 8.0            # Predator body radius in pixels
-SIZE_ARMOR_SCALE = 0.03          # Damage reduction per unit of effective_radius (3% per px)
-COLOR_PREDATOR = (255, 50, 50)   # Red color for predator rendering
 COLOR_HAZARD_LAVA = (220, 80, 30)
 COLOR_HAZARD_COLD = (80, 150, 255)
 COLOR_BIOME_WATER = (30, 60, 120)   # Water biome tint color

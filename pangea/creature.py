@@ -12,8 +12,8 @@ Sensor inputs (all normalized):
     [4] Distance to nearest creature  -> 0.0 (touching) to 1.0 (at vision limit / none)
     [5] Angle to nearest creature     -> -1.0 (hard left) to 1.0 (hard right), 0 if none
     [6] Own speed                     -> 0.0 (stopped) to 1.0 (max speed)
-    [7] Distance to nearest predator  -> 0.0 (touching) to 1.0 (at vision limit / none)
-    [8] Angle to nearest predator     -> -1.0 (hard left) to 1.0 (hard right), 0 if none
+    [7] Distance to nearest threat    -> 0.0 (touching) to 1.0 (at vision limit / none)
+    [8] Angle to nearest threat       -> -1.0 (hard left) to 1.0 (hard right), 0 if none
     [9] Under attack                  -> 0.0 (safe) to 1.0 (taking damage)
     [10] Biome speed                   -> 0.0 (very slow terrain) to 1.0 (fast terrain)
     [11] Biome danger                  -> 0.0 (safe/beneficial) to 1.0 (high energy drain)
@@ -92,6 +92,28 @@ class Creature:
 
     # ── Sensors ──────────────────────────────────────────────
 
+    def _find_threats(self, creatures: list) -> list:
+        """Return the subset of creatures that are hostile threats to this one.
+
+        A creature is a threat if it belongs to a species that can attack
+        and is permitted to attack this creature's species (same vs other).
+        """
+        my_species_id = self.dna.species_id
+        threats = []
+        for other in creatures:
+            if other is self or not other.alive:
+                continue
+            sp = other.species
+            if sp is None or not sp.can_attack:
+                continue
+            same_species = other.dna.species_id == my_species_id
+            if same_species and not sp.can_attack_own_species:
+                continue
+            if not same_species and not sp.can_attack_other_species:
+                continue
+            threats.append(other)
+        return threats
+
     def _find_nearest(
         self,
         targets: list,
@@ -153,7 +175,6 @@ class Creature:
         wrap: bool = False,
         vision_multiplier: float = 1.0,
         creatures: list | None = None,
-        predators: list | None = None,
         biome_speed: float = 1.0,
         biome_danger: float = 0.0,
     ) -> np.ndarray:
@@ -167,7 +188,6 @@ class Creature:
             wrap:              Whether the world wraps around.
             vision_multiplier: Scales effective vision (e.g. for day/night cycle).
             creatures:         List of all creatures for neighbor detection.
-            predators:         List of predators with .x, .y attributes.
             biome_speed:       Speed multiplier at creature's position (0.3–1.5).
             biome_danger:      Energy drain rate at creature's position (0.0–1.0).
 
@@ -208,14 +228,15 @@ class Creature:
         # ─ Own speed ─
         speed_normalized = min(self.speed / max(self.dna.max_speed, 0.01), 1.0)
 
-        # ─ Nearest predator ─
-        if predators is not None and len(predators) > 0:
-            pred_dist_normalized, pred_angle_normalized = self._find_nearest(
-                predators, vision, world_width, world_height, wrap,
-            )
-        else:
-            pred_dist_normalized = 1.0
-            pred_angle_normalized = 0.0
+        # ─ Nearest threat (hostile creature that can attack this one) ─
+        threat_dist_normalized = 1.0
+        threat_angle_normalized = 0.0
+        if creatures is not None:
+            threats = self._find_threats(creatures)
+            if threats:
+                threat_dist_normalized, threat_angle_normalized = self._find_nearest(
+                    threats, vision, world_width, world_height, wrap,
+                )
 
         # ─ Biome sensors ─
         # Normalize speed: 0.3–1.5 range → 0.0–1.0
@@ -230,8 +251,8 @@ class Creature:
             creature_dist_normalized,
             creature_angle_normalized,
             speed_normalized,
-            pred_dist_normalized,
-            pred_angle_normalized,
+            threat_dist_normalized,
+            threat_angle_normalized,
             min(self.under_attack, 1.0),
             biome_speed_normalized,
             biome_danger_normalized,

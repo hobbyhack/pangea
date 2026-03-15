@@ -65,20 +65,12 @@ def _food_snapshot(f) -> list:
             float(f.age), float(f.lifetime), f.is_corpse, f.species_id]
 
 
-def _predator_snapshot(p) -> list:
-    """Minimal predator state for per-frame sync."""
-    return [float(p.x), float(p.y), float(p.heading), float(p.radius),
-            p.resting, float(p.speed), float(p.vision), float(p.damage),
-            float(p.stamina), float(p.chase_time), float(p.rest_time)]
-
-
 def snapshot_from_world(world: World) -> dict:
     """Build a compact snapshot dict suitable for per-frame broadcast."""
     return {
         "t": MsgType.SNAPSHOT,
         "c": [_creature_snapshot(c) for c in world.creatures],
         "f": [_food_snapshot(f) for f in world.food],
-        "p": [_predator_snapshot(p) for p in world.predators],
         "et": world.elapsed_time,
         "st": world.season_time,
         "dnt": world.day_night_time,
@@ -133,19 +125,6 @@ def apply_snapshot(world: World, data: dict) -> None:
         for f in data["f"]
     ]
 
-    # ── Predators ────────────────────────────────────────────
-    from pangea.world import Predator
-
-    world.predators = []
-    for p in data["p"]:
-        pred = Predator(x=p[0], y=p[1], speed=p[5], vision=p[6],
-                        damage=p[7], radius=p[3], stamina=p[8])
-        pred.heading = p[2]
-        pred.resting = p[4]
-        pred.chase_time = p[9]
-        pred.rest_time = p[10]
-        world.predators.append(pred)
-
     # ── Timers ───────────────────────────────────────────────
     world.elapsed_time = data["et"]
     world.season_time = data["st"]
@@ -175,7 +154,6 @@ def full_state_from_world(
         _creature_to_dict,
         _food_to_dict,
         _hazard_to_dict,
-        _predator_to_dict,
         _zone_to_dict,
     )
 
@@ -186,7 +164,6 @@ def full_state_from_world(
         "settings": settings.to_dict(),
         "creatures": [_creature_to_dict(c) for c in world.creatures],
         "food": [_food_to_dict(f) for f in world.food],
-        "predators": [_predator_to_dict(p) for p in world.predators],
         "hazards": [_hazard_to_dict(h) for h in world.hazards],
         "biomes": [_biome_to_dict(b) for b in world.biomes],
         "world_timers": {
@@ -196,7 +173,6 @@ def full_state_from_world(
             "total_births": world.total_births,
             "total_deaths": world.total_deaths,
             "food_spawn_accum": world._food_spawn_accum,
-            "predator_respawn_timer": world._predator_respawn_timer,
         },
         "tools": {
             "drought_active": tools.drought_active,
@@ -218,7 +194,7 @@ def apply_full_state(data: dict):
     from pangea.save_load import _creature_from_dict
     from pangea.settings import SimSettings
     from pangea.tools import Barrier, PlayerTools, Zone
-    from pangea.world import Biome, Food, Hazard, Predator, World
+    from pangea.world import Biome, Food, Hazard, World
 
     settings = SimSettings.from_dict(data["settings"])
 
@@ -228,11 +204,9 @@ def apply_full_state(data: dict):
     saved_food = settings.initial_food_count
     saved_hazards = settings.hazard_count
     saved_biomes = settings.biome_count
-    saved_predators = settings.predator_count
     settings.initial_food_count = 0
     settings.hazard_count = 0
     settings.biome_count = 0
-    settings.predator_count = 0
 
     world = World(
         creatures,
@@ -245,7 +219,6 @@ def apply_full_state(data: dict):
     settings.initial_food_count = saved_food
     settings.hazard_count = saved_hazards
     settings.biome_count = saved_biomes
-    settings.predator_count = saved_predators
 
     # Restore food
     world.food = [
@@ -254,19 +227,6 @@ def apply_full_state(data: dict):
              species_id=f.get("species_id", ""))
         for f in data.get("food", [])
     ]
-
-    # Restore predators
-    world.predators = []
-    for p in data.get("predators", []):
-        pred = Predator(
-            x=p["x"], y=p["y"], speed=p["speed"], vision=p["vision"],
-            damage=p["damage"], radius=p["radius"], stamina=p.get("stamina", 0),
-        )
-        pred.heading = p["heading"]
-        pred.chase_time = p.get("chase_time", 0.0)
-        pred.rest_time = p.get("rest_time", 0.0)
-        pred.resting = p.get("resting", False)
-        world.predators.append(pred)
 
     # Restore hazards and biomes
     world.hazards = [
@@ -288,7 +248,6 @@ def apply_full_state(data: dict):
     world.total_births = timers.get("total_births", 0)
     world.total_deaths = timers.get("total_deaths", 0)
     world._food_spawn_accum = timers.get("food_spawn_accum", 0.0)
-    world._predator_respawn_timer = timers.get("predator_respawn_timer", 0.0)
     world.freeplay = data.get("freeplay", False)
 
     # Restore tools

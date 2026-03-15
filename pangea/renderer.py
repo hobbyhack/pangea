@@ -26,7 +26,6 @@ from pangea.config import (
     COLOR_HAZARD_LAVA,
     COLOR_HERBIVORE,
     COLOR_HUD_TEXT,
-    COLOR_PREDATOR,
 )
 import pangea.config as config
 from pangea.config import EVOLUTION_POINTS
@@ -211,9 +210,6 @@ class Renderer:
 
         # Creatures
         self._draw_creatures(world)
-
-        # Predators
-        self._draw_predators(world)
 
         # Update particle tracking
         self._track_events(world)
@@ -503,34 +499,6 @@ class Renderer:
             text = self.font_small.render(label, True, label_color)
             text.set_alpha(int(160 * pulse))
             self.surface.blit(text, text.get_rect(center=(cx, cy)))
-
-    # ── Predators ─────────────────────────────────────────────
-
-    def _draw_predators(self, world: World) -> None:
-        """Draw predators as red triangles pointing in their heading direction."""
-        for predator in world.predators:
-            cx, cy = int(predator.x), int(predator.y)
-            r = int(predator.radius)
-            h = predator.heading
-
-            # Triangle points: tip in heading direction, two back corners
-            tip_x = cx + int(math.cos(h) * (r + 4))
-            tip_y = cy + int(math.sin(h) * (r + 4))
-            left_x = cx + int(math.cos(h + 2.5) * r)
-            left_y = cy + int(math.sin(h + 2.5) * r)
-            right_x = cx + int(math.cos(h - 2.5) * r)
-            right_y = cy + int(math.sin(h - 2.5) * r)
-
-            pygame.draw.polygon(
-                self.surface, COLOR_PREDATOR,
-                [(tip_x, tip_y), (left_x, left_y), (right_x, right_y)],
-            )
-            # Dark outline
-            pygame.draw.polygon(
-                self.surface, (180, 30, 30),
-                [(tip_x, tip_y), (left_x, left_y), (right_x, right_y)],
-                2,
-            )
 
     # ── Creatures ────────────────────────────────────────────
 

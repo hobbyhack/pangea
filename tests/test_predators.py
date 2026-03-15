@@ -1,16 +1,33 @@
-"""Tests for the Predator class and predator-world integration."""
+"""Tests for threat detection — creatures sensing hostile attackers."""
 
 import numpy as np
 import pytest
 
-from pangea.config import NN_HIDDEN_SIZE, NN_INPUT_SIZE, NN_OUTPUT_SIZE, PREDATOR_DAMAGE, SIZE_ARMOR_SCALE
+from pangea.config import NN_HIDDEN_SIZE, NN_INPUT_SIZE, NN_OUTPUT_SIZE
 from pangea.creature import Creature
 from pangea.dna import DNA
 from pangea.settings import SimSettings
-from pangea.world import Predator, World
+from pangea.species import Species, SpeciesSettings, SpeciesRegistry
+from pangea.world import World
 
 
-def _make_creature(x=100.0, y=100.0, speed=20, size=20, vision=20, efficiency=20, lifespan=20):
+def _make_species(species_id: str, can_attack_other: bool = False,
+                  can_attack_own: bool = False) -> Species:
+    """Create a species with specified attack flags."""
+    return Species(
+        id=species_id,
+        name=species_id.title(),
+        color=(100, 100, 100),
+        settings=SpeciesSettings(),
+        can_eat_plants=True,
+        plant_food_multiplier=1.0,
+        can_attack_other_species=can_attack_other,
+        can_attack_own_species=can_attack_own,
+    )
+
+
+def _make_creature(x=100.0, y=100.0, species: Species | None = None,
+                   species_id: str = "herbivore"):
     """Helper to create a creature with specified traits."""
     weights = [
         np.random.randn(NN_INPUT_SIZE, NN_HIDDEN_SIZE) * 0.5,
@@ -18,112 +35,86 @@ def _make_creature(x=100.0, y=100.0, speed=20, size=20, vision=20, efficiency=20
         np.random.randn(NN_HIDDEN_SIZE, NN_OUTPUT_SIZE) * 0.5,
         np.zeros(NN_OUTPUT_SIZE),
     ]
-    dna = DNA(weights=weights, speed=speed, size=size, vision=vision,
-              efficiency=efficiency, lifespan=lifespan)
-    return Creature(dna, x, y)
+    dna = DNA(weights=weights, speed=20, size=20, vision=20,
+              efficiency=20, lifespan=20, species_id=species_id)
+    return Creature(dna, x, y, species=species)
 
 
-class TestPredators:
-    def test_predators_created_at_init(self):
-        """World should create the correct number of predators from settings."""
-        settings = SimSettings(predator_count=3)
-        creatures = [_make_creature()]
-        world = World(creatures, settings=settings)
-        assert len(world.predators) == 3
+class TestThreatSensing:
+    def test_no_threats_defaults(self):
+        """Without hostile creatures, threat sensors should be at defaults."""
+        herb_sp = _make_species("herbivore")
+        creature = _make_creature(species=herb_sp, species_id="herbivore")
+        inputs = creature.sense([], 800, 600, creatures=[])
+        assert inputs[7] == 1.0  # no threat → max distance
+        assert inputs[8] == 0.0  # no threat → no angle
 
-    def test_predator_chases_creature(self):
-        """Predator near a creature should move toward it."""
-        creature = _make_creature(x=200.0, y=200.0)
-        creature.alive = True
+    def test_non_attacker_not_detected_as_threat(self):
+        """A nearby herbivore should NOT register as a threat."""
+        herb_sp = _make_species("herbivore")
+        c1 = _make_creature(x=100, y=100, species=herb_sp, species_id="herbivore")
+        c2 = _make_creature(x=150, y=100, species=herb_sp, species_id="herbivore")
+        inputs = c1.sense([], 800, 600, creatures=[c1, c2])
+        assert inputs[7] == 1.0  # herbivore is not a threat
 
-        predator = Predator(x=100.0, y=200.0, speed=2.0, vision=150.0)
-        old_x = predator.x
-
-        predator.update([creature], dt=1 / 60, width=800, height=600)
-
-        # Predator should have moved to the right (toward creature at x=200)
-        assert predator.x > old_x
-
-    def test_predator_damages_on_contact(self):
-        """Overlapping predator should drain creature energy."""
-        creature = _make_creature(x=100.0, y=100.0)
-        initial_energy = creature.energy
-
-        settings = SimSettings(predator_count=0)
-        world = World([creature], settings=settings)
-
-        # Manually add a predator right on top of the creature
-        predator = Predator(x=100.0, y=100.0)
-        world.predators.append(predator)
-
-        dt = 1 / 60
-        world._check_predator_collisions(dt)
-
-        armor = creature.dna.effective_radius * SIZE_ARMOR_SCALE
-        expected_drain = PREDATOR_DAMAGE * max(0.1, 1.0 - armor) * dt * 60
-        assert creature.energy == pytest.approx(initial_energy - expected_drain)
-
-    def test_predator_count_zero(self):
-        """No predators should be created when setting is 0."""
-        settings = SimSettings(predator_count=0)
-        creatures = [_make_creature()]
-        world = World(creatures, settings=settings)
-        assert len(world.predators) == 0
-
-    def test_creature_senses_predator(self):
-        """Creature should detect a nearby predator via sensors."""
-        creature = _make_creature(x=100.0, y=100.0)
-        predator = Predator(x=150.0, y=100.0)
-        inputs = creature.sense([], 800, 600, predators=[predator])
-        # Predator distance sensor (index 7) should be < 1.0
-        assert inputs[7] < 1.0
+    def test_attacker_detected_as_threat(self):
+        """A nearby carnivore should register as a threat to a herbivore."""
+        herb_sp = _make_species("herbivore")
+        carn_sp = _make_species("carnivore", can_attack_other=True)
+        victim = _make_creature(x=100, y=100, species=herb_sp, species_id="herbivore")
+        attacker = _make_creature(x=150, y=100, species=carn_sp, species_id="carnivore")
+        inputs = victim.sense([], 800, 600, creatures=[victim, attacker])
+        assert inputs[7] < 1.0  # carnivore IS a threat
         assert inputs.shape == (12,)
 
-    def test_no_predator_sensor_defaults(self):
-        """Without predators, predator sensors should be at defaults."""
-        creature = _make_creature(x=100.0, y=100.0)
-        inputs = creature.sense([], 800, 600, predators=[])
-        assert inputs[7] == 1.0  # no predator → max distance
-        assert inputs[8] == 0.0  # no predator → no angle
+    def test_same_species_attacker_detected(self):
+        """A species that can_attack_own should be detected as threat by same species."""
+        sp = _make_species("cannibal", can_attack_own=True)
+        c1 = _make_creature(x=100, y=100, species=sp, species_id="cannibal")
+        c2 = _make_creature(x=150, y=100, species=sp, species_id="cannibal")
+        inputs = c1.sense([], 800, 600, creatures=[c1, c2])
+        assert inputs[7] < 1.0  # same-species attacker IS a threat
 
-    def test_size_armor_reduces_damage(self):
-        """Larger creatures should take less predator damage."""
-        # Small creature (size=5) vs large creature (size=60)
-        small = _make_creature(x=100.0, y=100.0, size=5, speed=35, vision=20,
-                               efficiency=20, lifespan=20)
-        large = _make_creature(x=100.0, y=100.0, size=60, speed=5, vision=15,
-                               efficiency=10, lifespan=10)
+    def test_same_species_not_threat_when_only_attacks_other(self):
+        """A carnivore that only attacks OTHER species shouldn't threaten its own."""
+        carn_sp = _make_species("carnivore", can_attack_other=True)
+        c1 = _make_creature(x=100, y=100, species=carn_sp, species_id="carnivore")
+        c2 = _make_creature(x=150, y=100, species=carn_sp, species_id="carnivore")
+        inputs = c1.sense([], 800, 600, creatures=[c1, c2])
+        assert inputs[7] == 1.0  # same-species carnivore is NOT a threat
 
-        settings = SimSettings(predator_count=0)
-        world_s = World([small], settings=settings)
-        world_l = World([large], settings=settings)
+    def test_dead_attacker_not_detected(self):
+        """A dead attacker should not register as a threat."""
+        herb_sp = _make_species("herbivore")
+        carn_sp = _make_species("carnivore", can_attack_other=True)
+        victim = _make_creature(x=100, y=100, species=herb_sp, species_id="herbivore")
+        attacker = _make_creature(x=150, y=100, species=carn_sp, species_id="carnivore")
+        attacker.alive = False
+        inputs = victim.sense([], 800, 600, creatures=[victim, attacker])
+        assert inputs[7] == 1.0  # dead creature is not a threat
 
-        pred_s = Predator(x=100.0, y=100.0)
-        pred_l = Predator(x=100.0, y=100.0)
-        world_s.predators.append(pred_s)
-        world_l.predators.append(pred_l)
+    def test_under_attack_from_creature_combat(self):
+        """Creature combat should set under_attack flag (tested via world)."""
+        carn_sp = _make_species("carnivore", can_attack_other=True)
+        herb_sp = _make_species("herbivore")
 
+        registry = SpeciesRegistry()
+        registry.register(carn_sp)
+        registry.register(herb_sp)
+        settings = SimSettings(species_registry=registry)
+
+        attacker = _make_creature(x=100, y=100, species=carn_sp, species_id="carnivore")
+        victim = _make_creature(x=100, y=100, species=herb_sp, species_id="herbivore")
+
+        world = World([attacker, victim], settings=settings)
         dt = 1 / 60
-        energy_before = small.energy
-        world_s._check_predator_collisions(dt)
-        small_drain = energy_before - small.energy
+        world._check_creature_attacks(dt)
 
-        energy_before = large.energy
-        world_l._check_predator_collisions(dt)
-        large_drain = energy_before - large.energy
+        assert victim.under_attack == 1.0
 
-        # Large creature should take less damage
-        assert large_drain < small_drain
-
-    def test_predator_wanders_without_prey(self):
-        """Predator should still move when no creatures are nearby."""
-        predator = Predator(x=400.0, y=300.0, speed=2.0, vision=150.0)
-        old_x = predator.x
-        old_y = predator.y
-
-        # Update with no creatures
-        predator.update([], dt=1 / 60, width=800, height=600)
-
-        # Predator should have moved (speed > 0)
-        moved = (predator.x != old_x) or (predator.y != old_y)
-        assert moved
+    def test_no_predators_in_world(self):
+        """World should not have a predators attribute."""
+        settings = SimSettings()
+        creatures = [_make_creature()]
+        world = World(creatures, settings=settings)
+        assert not hasattr(world, "predators")

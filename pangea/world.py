@@ -2,7 +2,7 @@
 World — the simulation environment.
 ============================================================
 Manages the 2D arena, food spawning/decay, creature-food collisions,
-boundary enforcement, biome regions, hazard zones, predators,
+boundary enforcement, biome regions, hazard zones,
 and player tool effects (zones, barriers).
 """
 
@@ -18,7 +18,6 @@ from pangea.config import (
     BIOME_FOOD_MULTIPLIER,
     BIOME_MAX_RADIUS,
     BIOME_MIN_RADIUS,
-    BIOME_PREDATOR_BLOCKED,
     BIOME_SPEED_MULTIPLIERS,
     CARNIVORE_ATTACK_RANGE,
     FOOD_ENERGY,
@@ -26,13 +25,8 @@ from pangea.config import (
     HAZARD_DAMAGE,
     HAZARD_MAX_RADIUS,
     HAZARD_MIN_RADIUS,
-    PREDATOR_DAMAGE,
-    PREDATOR_RADIUS,
-    PREDATOR_SPEED,
-    PREDATOR_VISION,
     CORPSE_ENERGY,
     CORPSE_RADIUS,
-    SIZE_ARMOR_SCALE,
     TERRITORY_GRID_SIZE,
 )
 from pangea.creature import Creature
@@ -74,87 +68,6 @@ class Biome:
     radius: float
     biome_type: str          # "water" or "road"
     speed_multiplier: float  # from BIOME_SPEED_MULTIPLIERS
-
-
-class Predator:
-    """An NPC predator that chases and damages creatures on contact."""
-
-    def __init__(
-        self,
-        x: float,
-        y: float,
-        speed: float = PREDATOR_SPEED,
-        vision: float = PREDATOR_VISION,
-        damage: float = PREDATOR_DAMAGE,
-        radius: float = PREDATOR_RADIUS,
-        stamina: float = 0.0,
-    ) -> None:
-        self.x = x
-        self.y = y
-        self.speed = speed
-        self.vision = vision
-        self.damage = damage
-        self.radius = radius
-        self.heading = random.uniform(0, 2 * math.pi)
-        self.stamina = stamina  # max chase seconds (0 = infinite)
-        self.chase_time = 0.0
-        self.rest_time = 0.0
-        self.resting = False
-
-    def update(
-        self,
-        creatures: list[Creature],
-        dt: float,
-        width: float,
-        height: float,
-    ) -> None:
-        """Move toward the nearest alive creature, or wander randomly."""
-        # Find nearest alive creature within vision
-        nearest_dist = float("inf")
-        target: Creature | None = None
-        for creature in creatures:
-            if not creature.alive:
-                continue
-            dx = creature.x - self.x
-            dy = creature.y - self.y
-            dist = math.sqrt(dx * dx + dy * dy)
-            if dist < self.vision and dist < nearest_dist:
-                nearest_dist = dist
-                target = creature
-
-        if self.resting:
-            # Wander while resting
-            self.heading += random.gauss(0, 0.2)
-            self.rest_time += dt
-            # Recover after resting for half the stamina duration
-            if self.stamina > 0 and self.rest_time >= self.stamina * 0.5:
-                self.resting = False
-                self.rest_time = 0.0
-                self.chase_time = 0.0
-        elif target is not None:
-            # Steer toward target
-            desired = math.atan2(target.y - self.y, target.x - self.x)
-            self.heading = desired
-            # Track chase fatigue
-            if self.stamina > 0:
-                self.chase_time += dt
-                if self.chase_time >= self.stamina:
-                    self.resting = True
-        else:
-            # Wander: slight random heading change
-            self.heading += random.gauss(0, 0.2)
-            # Recover chase time when not chasing
-            if self.chase_time > 0:
-                self.chase_time = max(0, self.chase_time - dt * 0.5)
-
-        # Move (slower when resting)
-        move_speed = self.speed * (0.3 if self.resting else 1.0)
-        self.x += math.cos(self.heading) * move_speed * dt * 60
-        self.y += math.sin(self.heading) * move_speed * dt * 60
-
-        # Clamp to bounds
-        self.x = max(self.radius, min(width - self.radius, self.x))
-        self.y = max(self.radius, min(height - self.radius, self.y))
 
 
 class World:
@@ -212,12 +125,6 @@ class World:
             for _ in range(self.settings.biome_count):
                 self.biomes.append(self._random_biome())
 
-        # Generate predators
-        self.predators: list[Predator] = []
-        for _ in range(self.settings.predator_count):
-            self.predators.append(self._spawn_predator())
-        self._predator_respawn_timer = 0.0
-
         # Spawn initial food
         initial = self.settings.initial_food_count
         for _ in range(initial):
@@ -243,11 +150,6 @@ class World:
         for food in self.food:
             food.x = max(food.radius, min(new_width - food.radius, food.x))
             food.y = max(food.radius, min(new_height - food.radius, food.y))
-
-        # Clamp predators
-        for pred in self.predators:
-            pred.x = max(pred.radius, min(new_width - pred.radius, pred.x))
-            pred.y = max(pred.radius, min(new_height - pred.radius, pred.y))
 
         # Clamp hazards
         for hazard in self.hazards:
@@ -338,21 +240,6 @@ class World:
         drain = BIOME_ENERGY_DRAIN.get(biome.biome_type, 0.0)
         if drain > 0:
             creature.energy -= drain * dt * 60
-
-    # ── Predator Spawning ──────────────────────────────────────
-
-    def _spawn_predator(self) -> Predator:
-        """Create a predator at a random position with current settings."""
-        px = random.uniform(50, self.width - 50)
-        py = random.uniform(50, self.height - 50)
-        return Predator(
-            x=px, y=py,
-            speed=self.settings.predator_speed,
-            vision=self.settings.predator_vision,
-            damage=self.settings.predator_damage,
-            radius=self.settings.predator_radius,
-            stamina=self.settings.predator_stamina,
-        )
 
     # ── Food Spawning ────────────────────────────────────────
 
@@ -543,27 +430,6 @@ class World:
                 intensity = (1.0 - dist / hazard.radius) * hazard.damage_rate
                 creature.energy -= intensity * dt * 60
 
-    # ── Predator Collisions ──────────────────────────────────
-
-    def _check_predator_collisions(self, dt: float) -> None:
-        """Drain energy from creatures that overlap with predators.
-
-        Larger creatures take reduced damage — effective_radius acts as armor,
-        reducing damage by SIZE_ARMOR_SCALE per pixel of radius.
-        """
-        for predator in self.predators:
-            for creature in self.creatures:
-                if not creature.alive:
-                    continue
-                dx = predator.x - creature.x
-                dy = predator.y - creature.y
-                dist = math.sqrt(dx * dx + dy * dy)
-                if dist < predator.radius + creature.dna.effective_radius:
-                    armor = creature.dna.effective_radius * SIZE_ARMOR_SCALE
-                    damage = predator.damage * max(0.1, 1.0 - armor) * dt * 60
-                    creature.energy -= damage
-                    creature.under_attack = 1.0
-
     # ── Creature Combat ───────────────────────────────────────
 
     def _check_creature_attacks(self, dt: float) -> None:
@@ -706,12 +572,11 @@ class World:
                 speed_mult = 1.0
                 biome_danger = 0.0
 
-            # Sense the environment (including predators and biome)
+            # Sense the environment (including threats and biome)
             inputs = creature.sense(
                 self.food, self.width, self.height, wrap,
                 vision_multiplier=vision_multiplier,
                 creatures=self.creatures,
-                predators=self.predators,
                 biome_speed=speed_mult,
                 biome_danger=biome_danger,
             )
@@ -752,42 +617,8 @@ class World:
         # Creature attacks (species with attack flags)
         self._check_creature_attacks(dt)
 
-        # Update predators (blocked from mountain biomes)
-        blocked_biomes = [b for b in self.biomes if b.biome_type in BIOME_PREDATOR_BLOCKED]
-        for predator in self.predators:
-            predator.update(self.creatures, dt, self.width, self.height)
-            # Push predators out of blocked biomes
-            for biome in blocked_biomes:
-                    dx = predator.x - biome.x
-                    dy = predator.y - biome.y
-                    dist = math.sqrt(dx * dx + dy * dy)
-                    if dist < biome.radius:
-                        # Push predator to edge of biome
-                        if dist > 0:
-                            nx, ny = dx / dist, dy / dist
-                        else:
-                            nx, ny = 1.0, 0.0
-                        predator.x = biome.x + nx * biome.radius
-                        predator.y = biome.y + ny * biome.radius
-        self._check_predator_collisions(dt)
-
-        # Sync predator count with settings
-        desired = self.settings.predator_count
-        while len(self.predators) < desired:
-            self.predators.append(self._spawn_predator())
-        while len(self.predators) > desired:
-            self.predators.pop()
-
-        # Predator respawn (replace killed predators over time)
-        if self.settings.predator_respawn_interval > 0:
-            self._predator_respawn_timer += dt
-            if self._predator_respawn_timer >= self.settings.predator_respawn_interval:
-                self._predator_respawn_timer = 0.0
-                if len(self.predators) < desired:
-                    self.predators.append(self._spawn_predator())
-
         # Reward scavengers near deaths
-        # Collect newly dead after all damage (predator + carnivore + hazard)
+        # Collect newly dead after all damage (carnivore + hazard)
         frame_dead = [
             c for c in self.creatures
             if not c.alive and not c.death_processed

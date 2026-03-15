@@ -283,7 +283,6 @@ class Simulation:
             world.generation = 0
             # Overwrite auto-generated entities with saved state
             world.food = loaded_snapshot["food"]
-            world.predators = loaded_snapshot["predators"]
             world.hazards = loaded_snapshot["hazards"]
             world.biomes = loaded_snapshot["biomes"]
             self._active_world = world
@@ -294,7 +293,6 @@ class Simulation:
             world.total_births = timers.get("total_births", 0)
             world.total_deaths = timers.get("total_deaths", 0)
             world._food_spawn_accum = timers.get("food_spawn_accum", 0.0)
-            world._predator_respawn_timer = timers.get("predator_respawn_timer", 0.0)
             # Restore tools state
             self.tools.drought_active = loaded_snapshot.get("tools_drought", False)
             self.tools.zones = loaded_snapshot.get("tools_zones", [])

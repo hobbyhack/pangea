@@ -84,15 +84,8 @@ class SimSettings:
     day_night_cycle_length: float = config.DAY_NIGHT_CYCLE_LENGTH
     night_vision_multiplier: float = config.NIGHT_VISION_MULTIPLIER
 
-    # ── Threats (Hazards & Predators) ─────────────────────────
+    # ── Threats (Hazards) ──────────────────────────────────────
     hazard_count: int = config.HAZARD_COUNT
-    predator_count: int = config.PREDATOR_COUNT
-    predator_speed: float = config.PREDATOR_SPEED
-    predator_vision: float = config.PREDATOR_VISION
-    predator_damage: float = config.PREDATOR_DAMAGE
-    predator_radius: float = config.PREDATOR_RADIUS
-    predator_stamina: float = 0.0
-    predator_respawn_interval: float = 0.0
 
     # ── Fitness Weights ────────────────────────────────────────
     fitness_food_weight: float = config.FITNESS_FOOD_WEIGHT
@@ -250,20 +243,6 @@ SETTING_DEFS: list[SettingDef] = [
     # ── Threats ──────────────────────────────────────────────
     SettingDef("hazard_count", "Hazard Zones", 0, 10, 1, ".0f", "Threats",
                tooltip="Number of damaging hazard zones placed on the map"),
-    SettingDef("predator_count", "Predators", 0, 10, 1, ".0f", "Threats",
-               tooltip="Number of AI-controlled predators that hunt creatures"),
-    SettingDef("predator_speed", "Predator Speed", 0.5, 5.0, 0.5, ".1f", "Threats",
-               tooltip="Movement speed of predators (higher = harder to outrun)"),
-    SettingDef("predator_vision", "Predator Vision", 50, 400, 25, ".0f", "Threats",
-               tooltip="How far predators can detect creatures (in pixels)"),
-    SettingDef("predator_damage", "Predator Damage", 1.0, 20.0, 1.0, ".1f", "Threats",
-               tooltip="Energy drained from a creature per predator hit"),
-    SettingDef("predator_radius", "Predator Size", 4.0, 20.0, 1.0, ".0f", "Threats",
-               tooltip="Collision radius of predators (larger = harder to dodge)"),
-    SettingDef("predator_stamina", "Predator Stamina", 0.0, 30.0, 1.0, ".0f", "Threats",
-               tooltip="Seconds a predator can chase before resting (0 = infinite stamina)"),
-    SettingDef("predator_respawn_interval", "Predator Respawn", 0.0, 60.0, 5.0, ".0f", "Threats",
-               tooltip="Seconds before a killed predator respawns (0 = predators are immortal)"),
 ]
 
 

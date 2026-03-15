@@ -29,7 +29,6 @@ def _make_world(n_creatures=5, n_food=10) -> tuple[World, SimSettings, PlayerToo
     settings.world_height = 300
     settings.hazard_count = 0
     settings.biome_count = 0
-    settings.predator_count = 0
     settings.initial_food_count = 0
 
     tools = PlayerTools()
