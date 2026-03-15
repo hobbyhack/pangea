@@ -6,6 +6,8 @@ Provides the main menu, in-app settings panel, and the pause overlay.
 
 from __future__ import annotations
 
+import time as _time
+from datetime import datetime
 from pathlib import Path
 
 import pygame
@@ -347,6 +349,8 @@ class Menu:
 
     # ── Settings Panel ──────────────────────────────────────
 
+    SETTINGS_FILE_DIR = "settings"
+
     def _settings_layout(self) -> dict:
         """Compute settings panel layout based on current window size."""
         w, h = config.WINDOW_WIDTH, config.WINDOW_HEIGHT
@@ -357,13 +361,21 @@ class Menu:
         footer_h = 80
         scroll_area_h = h - header_h - footer_h
         btn_y = h - footer_h + 15
+        btn_w = 110
+        gap = 10
+        total_w = btn_w * 4 + gap * 3
+        start_x = w // 2 - total_w // 2
         return {
             "panel_x": panel_x, "panel_w": panel_w, "slider_w": slider_w,
             "header_h": header_h, "footer_h": footer_h,
             "scroll_area_h": scroll_area_h, "btn_y": btn_y,
-            "back_btn": Button(w // 2 - 80, btn_y, 160, 45, "Back",
+            "back_btn": Button(start_x, btn_y, btn_w, 45, "Back",
                                color=(50, 60, 80), hover_color=(70, 80, 110)),
-            "reset_btn": Button(w // 2 + 100, btn_y, 140, 45, "Reset",
+            "save_btn": Button(start_x + btn_w + gap, btn_y, btn_w, 45, "Save",
+                               color=(40, 65, 50), hover_color=(55, 90, 65)),
+            "load_btn": Button(start_x + (btn_w + gap) * 2, btn_y, btn_w, 45, "Load",
+                               color=(45, 50, 70), hover_color=(60, 68, 95)),
+            "reset_btn": Button(start_x + (btn_w + gap) * 3, btn_y, btn_w, 45, "Reset",
                                 color=(80, 45, 45), hover_color=(110, 60, 60)),
         }
 
@@ -424,6 +436,33 @@ class Menu:
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if lay["back_btn"].is_clicked(mouse_pos):
                         return settings
+                    if lay["save_btn"].is_clicked(mouse_pos):
+                        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        name = self._show_text_input("Save Name:", ts)
+                        if name:
+                            safe = "".join(
+                                c if c.isalnum() or c in "-_ " else "_" for c in name
+                            )
+                            Path(self.SETTINGS_FILE_DIR).mkdir(parents=True, exist_ok=True)
+                            filepath = f"{self.SETTINGS_FILE_DIR}/{safe}.json"
+                            settings.save_to_file(filepath)
+                        lay = self._settings_layout()
+                        continue
+                    if lay["load_btn"].is_clicked(mouse_pos):
+                        def _settings_name(f: Path) -> str:
+                            return f.stem.replace("settings_", "")
+                        filepath = self._show_file_manager(
+                            self.SETTINGS_FILE_DIR,
+                            title="SETTINGS FILES",
+                            name_transform=_settings_name,
+                        )
+                        if filepath:
+                            try:
+                                settings = SimSettings.load_from_file(filepath)
+                            except Exception:
+                                self._show_message("Failed to load settings file.")
+                        lay = self._settings_layout()
+                        continue
                     if lay["reset_btn"].is_clicked(mouse_pos):
                         settings = SimSettings()
                         continue
@@ -567,10 +606,9 @@ class Menu:
             # Footer buttons (fixed)
             footer_bg = pygame.Rect(0, config.WINDOW_HEIGHT - footer_h, config.WINDOW_WIDTH, footer_h)
             pygame.draw.rect(self.surface, COLOR_MENU_BG, footer_bg)
-            lay["back_btn"].update(mouse_pos)
-            lay["back_btn"].draw(self.surface, self.font)
-            lay["reset_btn"].update(mouse_pos)
-            lay["reset_btn"].draw(self.surface, self.font)
+            for btn_key in ("back_btn", "save_btn", "load_btn", "reset_btn"):
+                lay[btn_key].update(mouse_pos)
+                lay[btn_key].draw(self.surface, self.font)
 
             # Tooltip overlay (drawn last, on top of everything)
             if hovered_tooltip:
@@ -1633,105 +1671,234 @@ class Menu:
         pygame.draw.rect(self.surface, (90, 100, 140), bg_rect, 1, border_radius=5)
         self.surface.blit(text_surf, (tx + pad_x, ty + pad_y))
 
-    # ── Per-Species Save / Load ─────────────────────────────────
+    # ── File Management ──────────────────────────────────────────
 
-    def _save_species_settings(self, sp: Species) -> None:
-        """Save a species definition (diet flags + settings) to a JSON file."""
-        import json
-        Path(self.SPECIES_DIR).mkdir(parents=True, exist_ok=True)
-        filename = f"{sp.id}.json"
-        filepath = Path(self.SPECIES_DIR) / filename
-        with open(filepath, "w") as f:
-            json.dump(sp.to_dict(), f, indent=2)
+    def _pick_file_dialog(self, title: str = "Select File") -> str | None:
+        """Open a native OS file dialog to pick a JSON file."""
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            filepath = filedialog.askopenfilename(
+                title=title,
+                filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            )
+            root.destroy()
+            pygame.event.clear()  # Clear stale events from losing focus
+            return filepath if filepath else None
+        except Exception:
+            return None
 
-    def _load_species_settings(self, sp: Species) -> None:
-        """Show a file picker and load species settings from a JSON file."""
-        import json
-        species_dir = Path(self.SPECIES_DIR)
-        if not species_dir.exists():
-            self._show_message("No species settings found.", f"Save a species first to {self.SPECIES_DIR}/")
-            return
-        files = sorted(
-            [f.name for f in species_dir.iterdir() if f.suffix == ".json"],
-            reverse=True,
-        )
-        if not files:
-            self._show_message("No species settings found.", f"Save a species first to {self.SPECIES_DIR}/")
-            return
+    def _show_file_manager(
+        self,
+        directory: str,
+        title: str = "SELECT FILE",
+        hint: str = "Left-click: load  |  Right-click: delete  |  Scroll for more",
+        allow_import: bool = True,
+        name_transform=None,
+    ) -> str | None:
+        """Show a file manager dialog with load/delete/import support.
 
-        # Reuse the simple file picker UI
+        Args:
+            directory: Directory to list files from.
+            title: Title text displayed at top.
+            hint: Hint text below title.
+            allow_import: Show Import button for OS file dialog.
+            name_transform: Optional callable(Path) -> str for display names.
+
+        Returns:
+            Filepath string of selected file, or None if cancelled.
+        """
         clock = pygame.time.Clock()
         scroll = 0
+
+        if name_transform is None:
+            name_transform = lambda f: f.stem
+
         while True:
+            # Refresh file list each iteration (reflects deletions)
+            dir_path = Path(directory)
+            if dir_path.exists():
+                files = sorted(
+                    [f for f in dir_path.iterdir() if f.suffix == ".json"],
+                    key=lambda f: f.stat().st_mtime,
+                    reverse=True,
+                )
+            else:
+                files = []
+
             mouse_pos = pygame.mouse.get_pos()
+            max_visible = max(1, (config.WINDOW_HEIGHT - 150) // 40)
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
-                    return
+                    return None
                 if self._handle_window_event(event):
                     continue
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                    return
+                    return None
                 if event.type == pygame.MOUSEWHEEL:
-                    scroll = max(0, scroll - event.y)
-                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    max_scroll = max(0, len(files) - max_visible)
+                    scroll = max(0, min(max_scroll, scroll - event.y))
+
+                if event.type == pygame.MOUSEBUTTONDOWN:
                     mx, my = mouse_pos
-                    back_rect = pygame.Rect(20, config.WINDOW_HEIGHT - 50, 100, 36)
-                    if back_rect.collidepoint(mx, my):
-                        return
-                    max_visible = (config.WINDOW_HEIGHT - 120) // 34
+
+                    # Back button
+                    back_rect = pygame.Rect(20, config.WINDOW_HEIGHT - 55, 100, 36)
+                    if back_rect.collidepoint(mx, my) and event.button == 1:
+                        return None
+
+                    # Import button
+                    if allow_import and event.button == 1:
+                        import_rect = pygame.Rect(
+                            config.WINDOW_WIDTH - 180, config.WINDOW_HEIGHT - 55, 160, 36,
+                        )
+                        if import_rect.collidepoint(mx, my):
+                            filepath = self._pick_file_dialog(f"Import {title}")
+                            if filepath:
+                                return filepath
+                            continue
+
+                    # File items
                     for idx in range(min(max_visible, len(files) - scroll)):
                         fi = idx + scroll
-                        item_rect = pygame.Rect(30, 70 + idx * 34, config.WINDOW_WIDTH - 60, 30)
+                        item_rect = pygame.Rect(30, 80 + idx * 40, config.WINDOW_WIDTH - 60, 36)
                         if item_rect.collidepoint(mx, my):
-                            filepath = species_dir / files[fi]
-                            try:
-                                with open(filepath) as f:
-                                    data = json.load(f)
-                                # Apply loaded values onto existing species
-                                loaded = Species.from_dict(data)
-                                # Copy diet flags
-                                for attr in (
-                                    "can_eat_plants", "plant_food_multiplier",
-                                    "can_attack_other_species", "can_attack_own_species",
-                                    "can_eat_other_corpse", "can_eat_own_corpse",
-                                    "attack_damage", "energy_steal_fraction",
-                                    "scavenge_death_radius", "scavenge_death_energy",
+                            if event.button == 1:  # Left click - select
+                                return str(files[fi])
+                            elif event.button == 3:  # Right click - delete
+                                name = files[fi].stem
+                                if self._show_confirm(
+                                    f"Delete '{name}'?", "This cannot be undone.",
                                 ):
-                                    setattr(sp, attr, getattr(loaded, attr))
-                                # Copy per-species settings
-                                sp.settings = loaded.settings.copy()
-                            except Exception:
-                                pass
-                            return
+                                    files[fi].unlink()
+                                break
 
-            # Draw file picker
+            # ── Draw ──
             self.surface.fill(COLOR_MENU_BG)
-            title = self.font_heading.render(f"LOAD SETTINGS FOR {sp.name.upper()}", True, (180, 190, 220))
-            self.surface.blit(title, (30, 20))
-            hint = self.font_small.render("Select a species file to load settings from  |  ESC to cancel", True, (100, 105, 130))
-            self.surface.blit(hint, (30, 44))
+            title_surf = self.font_heading.render(title, True, (180, 190, 220))
+            self.surface.blit(title_surf, (30, 20))
+            hint_surf = self.font_small.render(hint, True, (100, 105, 130))
+            self.surface.blit(hint_surf, (30, 44))
 
-            max_visible = (config.WINDOW_HEIGHT - 120) // 34
-            for idx in range(min(max_visible, len(files) - scroll)):
-                fi = idx + scroll
-                item_rect = pygame.Rect(30, 70 + idx * 34, config.WINDOW_WIDTH - 60, 30)
-                hovered = item_rect.collidepoint(mouse_pos)
-                color = (45, 50, 65) if hovered else (30, 33, 45)
-                pygame.draw.rect(self.surface, color, item_rect, border_radius=4)
-                pygame.draw.rect(self.surface, (55, 60, 75), item_rect, 1, border_radius=4)
-                display = files[fi].replace(".json", "")
-                ft = self.font_small.render(display, True, (180, 185, 200))
-                self.surface.blit(ft, (item_rect.x + 8, item_rect.y + 7))
+            if files:
+                for idx in range(min(max_visible, len(files) - scroll)):
+                    fi = idx + scroll
+                    f = files[fi]
+                    item_rect = pygame.Rect(30, 80 + idx * 40, config.WINDOW_WIDTH - 60, 36)
+                    hovered = item_rect.collidepoint(mouse_pos)
+                    bg = (45, 50, 65) if hovered else (30, 33, 45)
+                    pygame.draw.rect(self.surface, bg, item_rect, border_radius=4)
+                    pygame.draw.rect(self.surface, (55, 60, 75), item_rect, 1, border_radius=4)
+
+                    display = name_transform(f)
+                    ft = self.font_small.render(display, True, (180, 185, 200))
+                    self.surface.blit(ft, (item_rect.x + 10, item_rect.y + 4))
+
+                    # Modification timestamp
+                    mtime = f.stat().st_mtime
+                    ts = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(mtime))
+                    ts_surf = self.font_small.render(ts, True, (90, 95, 115))
+                    self.surface.blit(
+                        ts_surf,
+                        (item_rect.right - ts_surf.get_width() - 10, item_rect.y + 4),
+                    )
+
+                # Scroll indicator
+                if len(files) > max_visible:
+                    total = len(files)
+                    bar_area_h = max_visible * 40
+                    bar_h = max(20, int(bar_area_h * max_visible / total))
+                    max_scroll_val = max(1, total - max_visible)
+                    bar_y = 80 + int((bar_area_h - bar_h) * scroll / max_scroll_val)
+                    bar_x = config.WINDOW_WIDTH - 14
+                    pygame.draw.rect(
+                        self.surface, (40, 43, 58), (bar_x, 80, 5, bar_area_h),
+                        border_radius=2,
+                    )
+                    pygame.draw.rect(
+                        self.surface, (90, 100, 130), (bar_x, bar_y, 5, bar_h),
+                        border_radius=2,
+                    )
+            else:
+                no_files = self.font_subtitle.render("No files found", True, (90, 95, 115))
+                self.surface.blit(
+                    no_files, no_files.get_rect(center=(config.WINDOW_WIDTH // 2, 120)),
+                )
 
             # Back button
-            back_rect = pygame.Rect(20, config.WINDOW_HEIGHT - 50, 100, 36)
+            back_rect = pygame.Rect(20, config.WINDOW_HEIGHT - 55, 100, 36)
             bh = back_rect.collidepoint(mouse_pos)
-            pygame.draw.rect(self.surface, (55, 60, 80) if bh else (40, 44, 58), back_rect, border_radius=5)
+            pygame.draw.rect(
+                self.surface, (55, 60, 80) if bh else (40, 44, 58),
+                back_rect, border_radius=5,
+            )
             bt = self.font_small.render("Back", True, (180, 185, 200))
             self.surface.blit(bt, bt.get_rect(center=back_rect.center))
 
+            # Import button
+            if allow_import:
+                import_rect = pygame.Rect(
+                    config.WINDOW_WIDTH - 180, config.WINDOW_HEIGHT - 55, 160, 36,
+                )
+                ih = import_rect.collidepoint(mouse_pos)
+                pygame.draw.rect(
+                    self.surface, (50, 55, 70) if ih else (35, 40, 52),
+                    import_rect, border_radius=5,
+                )
+                it = self.font_small.render("Import File...", True, (170, 180, 210))
+                self.surface.blit(it, it.get_rect(center=import_rect.center))
+
             pygame.display.flip()
             clock.tick(30)
+
+    # ── Per-Species Save / Load ─────────────────────────────────
+
+    def _save_species_settings(self, sp: Species) -> None:
+        """Save a species definition (diet flags + settings) to a named JSON file."""
+        import json
+        name = self._show_text_input("Save Species As:", sp.id)
+        if not name:
+            return
+        safe = "".join(c if c.isalnum() or c in "-_ " else "_" for c in name)
+        Path(self.SPECIES_DIR).mkdir(parents=True, exist_ok=True)
+        filepath = Path(self.SPECIES_DIR) / f"{safe}.json"
+        with open(filepath, "w") as f:
+            json.dump(sp.to_dict(), f, indent=2)
+
+    def _apply_species_file(self, sp: Species, filepath: str) -> bool:
+        """Load a species JSON file and apply its values onto an existing species."""
+        import json
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            loaded = Species.from_dict(data)
+            for attr in (
+                "can_eat_plants", "plant_food_multiplier",
+                "can_attack_other_species", "can_attack_own_species",
+                "can_eat_other_corpse", "can_eat_own_corpse",
+                "attack_damage", "energy_steal_fraction",
+                "scavenge_death_radius", "scavenge_death_energy",
+            ):
+                setattr(sp, attr, getattr(loaded, attr))
+            sp.settings = loaded.settings.copy()
+            return True
+        except Exception:
+            return False
+
+    def _load_species_settings(self, sp: Species) -> None:
+        """Show a file manager and load species settings from a JSON file."""
+        filepath = self._show_file_manager(
+            self.SPECIES_DIR,
+            title=f"LOAD SETTINGS FOR {sp.name.upper()}",
+            hint="Left-click: load  |  Right-click: delete  |  Import from file",
+        )
+        if filepath:
+            if not self._apply_species_file(sp, filepath):
+                self._show_message("Failed to load species file.")
 
     def _draw_toggle(self, x: int, y: int, on: bool) -> None:
         """Draw a toggle switch widget."""

@@ -421,37 +421,46 @@ class SettingsPanel:
                 self._file_scroll = max(0, self._file_scroll - event.y)
                 return settings
 
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        if event.type == pygame.MOUSEBUTTONDOWN:
             mx, my = event.pos
             if not prect.collidepoint(mx, my):
                 self._file_picker_mode = None
                 return settings
 
-            # Close button
-            close_rect = pygame.Rect(px + PANEL_WIDTH - 30, 8, 22, 22)
-            if close_rect.collidepoint(mx, my):
-                self.visible = False
-                self._file_picker_mode = None
-                return settings
+            if event.button == 1:
+                # Close button
+                close_rect = pygame.Rect(px + PANEL_WIDTH - 30, 8, 22, 22)
+                if close_rect.collidepoint(mx, my):
+                    self.visible = False
+                    self._file_picker_mode = None
+                    return settings
 
-            # Back button
-            back_rect = pygame.Rect(px + 10, config.WINDOW_HEIGHT - 50, 80, 32)
-            if back_rect.collidepoint(mx, my):
-                self._file_picker_mode = None
-                return settings
+                # Back button
+                back_rect = pygame.Rect(px + 10, config.WINDOW_HEIGHT - 50, 80, 32)
+                if back_rect.collidepoint(mx, my):
+                    self._file_picker_mode = None
+                    return settings
 
-            # File items
-            max_visible = (config.WINDOW_HEIGHT - HEADER_HEIGHT - 80) // 30
+            # File items — left-click to load, right-click to delete
+            list_top = HEADER_HEIGHT + 44
+            max_visible = (config.WINDOW_HEIGHT - list_top - 60) // 30
             for i in range(min(max_visible, len(self._file_list) - self._file_scroll)):
                 idx = i + self._file_scroll
-                item_rect = pygame.Rect(px + 10, HEADER_HEIGHT + 30 + i * 30, PANEL_WIDTH - 20, 26)
+                item_rect = pygame.Rect(px + 10, list_top + i * 30, PANEL_WIDTH - 20, 26)
                 if item_rect.collidepoint(mx, my):
                     filepath = f"{SETTINGS_DIR}/{self._file_list[idx]}"
-                    try:
-                        settings = SimSettings.load_from_file(filepath)
-                        self._file_picker_mode = None
-                    except Exception:
-                        pass  # ignore bad files
+                    if event.button == 1:  # Load
+                        try:
+                            settings = SimSettings.load_from_file(filepath)
+                            self._file_picker_mode = None
+                        except Exception:
+                            pass
+                    elif event.button == 3:  # Delete
+                        try:
+                            Path(filepath).unlink()
+                        except Exception:
+                            pass
+                        self._file_list = SimSettings.list_settings_files(SETTINGS_DIR)
                     return settings
 
         return settings
@@ -465,14 +474,18 @@ class SettingsPanel:
         title = self._font.render(mode_label, True, (160, 175, 210))
         surface.blit(title, (px + 12, HEADER_HEIGHT + 4))
 
+        hint = self._font_small.render("Click: load  |  Right-click: delete", True, (85, 90, 110))
+        surface.blit(hint, (px + 12, HEADER_HEIGHT + 26))
+
         if not self._file_list:
             msg = self._font_small.render("No settings files found.", True, (140, 140, 160))
             surface.blit(msg, (px + 20, HEADER_HEIGHT + 50))
         else:
-            max_visible = (config.WINDOW_HEIGHT - HEADER_HEIGHT - 80) // 30
+            list_top = HEADER_HEIGHT + 44
+            max_visible = (config.WINDOW_HEIGHT - list_top - 60) // 30
             for i in range(min(max_visible, len(self._file_list) - self._file_scroll)):
                 idx = i + self._file_scroll
-                item_rect = pygame.Rect(px + 10, HEADER_HEIGHT + 30 + i * 30, PANEL_WIDTH - 20, 26)
+                item_rect = pygame.Rect(px + 10, list_top + i * 30, PANEL_WIDTH - 20, 26)
                 hovered = item_rect.collidepoint(mouse_pos)
                 color = (45, 50, 65) if hovered else (30, 33, 45)
                 pygame.draw.rect(surface, color, item_rect, border_radius=4)
