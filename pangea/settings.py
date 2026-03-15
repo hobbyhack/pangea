@@ -93,6 +93,7 @@ class SimSettings:
     fitness_energy_weight: float = config.FITNESS_ENERGY_WEIGHT
     territory_fitness_weight: float = 0.0
     fitness_offspring_weight: float = config.FITNESS_OFFSPRING_WEIGHT
+    fitness_distance_weight: float = config.FITNESS_DISTANCE_WEIGHT
 
     # ── Freeplay Mode ──────────────────────────────────────────
     freeplay_initial_population: int = config.FREEPLAY_INITIAL_POPULATION
@@ -307,6 +308,8 @@ def _species_setting_defs(species_id: str, category: str) -> list[SettingDef]:
                    category, tooltip="Area explored contribution to fitness", species_id=species_id),
         SettingDef("fitness_offspring_weight", "Offspring Weight", 0.0, 20.0, 0.5, ".1f",
                    category, tooltip="Breeding success contribution to fitness", species_id=species_id),
+        SettingDef("fitness_distance_weight", "Distance Weight", 0.0, 2.0, 0.05, ".2f",
+                   category, tooltip="Distance traveled contribution to fitness (rewards movement)", species_id=species_id),
         # Extinction
         SettingDef("extinction_mode", "Extinction Mode", 0, 2, 1, ".0f",
                    category, widget_type="select",

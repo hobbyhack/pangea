@@ -441,7 +441,7 @@ class SettingsPanel:
                     self._file_picker_mode = None
                     return settings
 
-            # File items — left-click to load, right-click to delete
+            # File items — left: load, right: delete, middle: rename
             list_top = HEADER_HEIGHT + 44
             max_visible = (config.WINDOW_HEIGHT - list_top - 60) // 30
             for i in range(min(max_visible, len(self._file_list) - self._file_scroll)):
@@ -461,6 +461,21 @@ class SettingsPanel:
                         except Exception:
                             pass
                         self._file_list = SimSettings.list_settings_files(SETTINGS_DIR)
+                    elif event.button == 2:  # Middle-click — rename
+                        old_name = self._file_list[idx].replace(".json", "")
+                        new_name = self._show_rename_input(old_name)
+                        if new_name and new_name != old_name:
+                            safe = "".join(
+                                c if c.isalnum() or c in "-_ " else "_"
+                                for c in new_name
+                            )
+                            old_path = Path(filepath)
+                            new_path = old_path.parent / f"{safe}.json"
+                            try:
+                                old_path.rename(new_path)
+                            except Exception:
+                                pass
+                            self._file_list = SimSettings.list_settings_files(SETTINGS_DIR)
                     return settings
 
         return settings
@@ -474,7 +489,7 @@ class SettingsPanel:
         title = self._font.render(mode_label, True, (160, 175, 210))
         surface.blit(title, (px + 12, HEADER_HEIGHT + 4))
 
-        hint = self._font_small.render("Click: load  |  Right-click: delete", True, (85, 90, 110))
+        hint = self._font_small.render("L: load  R: delete  M: rename", True, (85, 90, 110))
         surface.blit(hint, (px + 12, HEADER_HEIGHT + 26))
 
         if not self._file_list:
@@ -502,6 +517,60 @@ class SettingsPanel:
         pygame.draw.rect(surface, (60, 60, 75) if hovered else (45, 48, 60), back_rect, border_radius=5)
         bt = self._font_small.render("Back", True, (180, 185, 200))
         surface.blit(bt, bt.get_rect(center=back_rect.center))
+
+    # ── Inline Text Input ─────────────────────────────────────
+
+    def _show_rename_input(self, initial: str = "") -> str | None:
+        """Minimal text input overlay for renaming. Returns new name or None."""
+        self._ensure_fonts()
+        clock = pygame.time.Clock()
+        text = initial
+        cursor_blink = 0
+
+        while True:
+            cursor_blink += 1
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return None
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_ESCAPE:
+                        return None
+                    elif event.key == pygame.K_RETURN:
+                        return text.strip()
+                    elif event.key == pygame.K_BACKSPACE:
+                        text = text[:-1]
+                    elif event.unicode and event.unicode.isprintable() and len(text) < 40:
+                        text += event.unicode
+
+            # Draw overlay on top of current screen content
+            overlay = pygame.Surface((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 160))
+            surface = pygame.display.get_surface()
+            surface.blit(overlay, (0, 0))
+
+            cx = config.WINDOW_WIDTH // 2
+            cy = config.WINDOW_HEIGHT // 2
+            dw, dh = 380, 110
+            dr = pygame.Rect(cx - dw // 2, cy - dh // 2, dw, dh)
+            pygame.draw.rect(surface, (25, 28, 40), dr, border_radius=8)
+            pygame.draw.rect(surface, (80, 90, 120), dr, 2, border_radius=8)
+
+            prompt = self._font.render("Rename", True, (180, 190, 220))
+            surface.blit(prompt, prompt.get_rect(center=(cx, cy - 28)))
+
+            field = pygame.Rect(cx - 150, cy - 2, 300, 26)
+            pygame.draw.rect(surface, (15, 17, 28), field, border_radius=4)
+            pygame.draw.rect(surface, (70, 80, 110), field, 1, border_radius=4)
+
+            cursor = "|" if (cursor_blink // 15) % 2 == 0 else ""
+            ts = self._font_small.render(text + cursor, True, (220, 225, 240))
+            surface.blit(ts, (field.x + 6, field.y + 5))
+
+            hint = self._font_small.render("Enter to confirm, Esc to cancel", True, (90, 95, 110))
+            surface.blit(hint, hint.get_rect(center=(cx, cy + 34)))
+
+            pygame.display.flip()
+            clock.tick(30)
 
     # ── Widget Helpers ────────────────────────────────────────
 

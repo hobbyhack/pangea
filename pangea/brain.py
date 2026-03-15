@@ -27,7 +27,9 @@ class NeuralNetwork:
         self.W1 = np.random.randn(NN_INPUT_SIZE, NN_HIDDEN_SIZE) * 0.5
         self.b1 = np.zeros(NN_HIDDEN_SIZE)
         self.W2 = np.random.randn(NN_HIDDEN_SIZE, NN_OUTPUT_SIZE) * 0.5
+        # Bias thrust output positive so creatures default to moving forward
         self.b2 = np.zeros(NN_OUTPUT_SIZE)
+        self.b2[1] = 0.5
 
     def forward(self, inputs: np.ndarray) -> np.ndarray:
         """

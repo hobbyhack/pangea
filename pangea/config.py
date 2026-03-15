@@ -83,6 +83,10 @@ FITNESS_FOOD_WEIGHT = 10.0   # Points per food item eaten
 FITNESS_TIME_WEIGHT = 0.1    # Points per second survived
 FITNESS_ENERGY_WEIGHT = 0.05 # Points per unit of remaining energy
 FITNESS_OFFSPRING_WEIGHT = 5.0  # Points per offspring produced
+FITNESS_DISTANCE_WEIGHT = 0.2  # Points per pixel of distance traveled
+
+# ── Movement Balance ────────────────────────────────────────
+MIN_THRUST_FRACTION = 0.2      # Minimum thrust as fraction of max speed (always moving)
 
 
 # ── Day/Night Cycle ────────────────────────────────────────

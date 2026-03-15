@@ -21,6 +21,7 @@ import numpy as np
 
 from pangea.config import (
     EVOLUTION_POINTS,
+    FITNESS_DISTANCE_WEIGHT,
     FITNESS_ENERGY_WEIGHT,
     FITNESS_FOOD_WEIGHT,
     FITNESS_OFFSPRING_WEIGHT,
@@ -66,24 +67,28 @@ def evaluate_fitness(
         energy_w = ss.fitness_energy_weight
         territory_w = ss.territory_fitness_weight
         offspring_w = ss.fitness_offspring_weight
+        distance_w = ss.fitness_distance_weight
     elif settings is not None:
         food_w = settings.fitness_food_weight
         time_w = settings.fitness_time_weight
         energy_w = settings.fitness_energy_weight
         territory_w = settings.territory_fitness_weight
         offspring_w = settings.fitness_offspring_weight
+        distance_w = settings.fitness_distance_weight
     else:
         food_w = FITNESS_FOOD_WEIGHT
         time_w = FITNESS_TIME_WEIGHT
         energy_w = FITNESS_ENERGY_WEIGHT
         territory_w = 0.0
         offspring_w = FITNESS_OFFSPRING_WEIGHT
+        distance_w = FITNESS_DISTANCE_WEIGHT
     return (
         creature.food_eaten * food_w
         + creature.age * time_w
         + creature.energy * energy_w
         + len(creature.territory_cells) * territory_w
         + creature.offspring_count * offspring_w
+        + creature.distance_traveled * distance_w
     )
 
 

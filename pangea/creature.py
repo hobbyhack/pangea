@@ -33,6 +33,7 @@ from pangea.brain import NeuralNetwork
 from pangea.config import (
     BASE_ENERGY,
     ENERGY_COST_PER_THRUST,
+    MIN_THRUST_FRACTION,
 )
 
 from typing import TYPE_CHECKING
@@ -63,6 +64,7 @@ class Creature:
         self.under_attack = 0.0  # 0.0 = safe, 1.0 = taking damage this frame
         self.death_processed = False  # True once scavenger rewards have been given
         self.territory_cells: set[tuple[int, int]] = set()  # visited grid cells
+        self.distance_traveled: float = 0.0  # total pixels moved (for fitness)
 
         # Freeplay breeding state
         self.breed_cooldown: float = 0.0   # seconds until next breed allowed
@@ -276,8 +278,11 @@ class Creature:
         # Keep heading in [0, 2*pi]
         self.heading %= 2 * math.pi
 
-        # Output[1]: thrust in [0, 1]
-        thrust = (outputs[1] + 1.0) / 2.0
+        # Output[1]: thrust in [MIN_THRUST_FRACTION, 1]
+        # Creatures always have a minimum forward speed so spinning in place
+        # is not a viable strategy — they must navigate, not idle.
+        raw_thrust = (outputs[1] + 1.0) / 2.0
+        thrust = MIN_THRUST_FRACTION + (1.0 - MIN_THRUST_FRACTION) * raw_thrust
         self.speed = thrust * self.dna.max_speed
 
     # ── Physics Update ───────────────────────────────────────
@@ -297,8 +302,11 @@ class Creature:
             return
 
         # Move (apply biome speed multiplier to movement only)
-        self.x += math.cos(self.heading) * self.speed * speed_multiplier * dt * 60
-        self.y += math.sin(self.heading) * self.speed * speed_multiplier * dt * 60
+        dx = math.cos(self.heading) * self.speed * speed_multiplier * dt * 60
+        dy = math.sin(self.heading) * self.speed * speed_multiplier * dt * 60
+        self.x += dx
+        self.y += dy
+        self.distance_traveled += math.sqrt(dx * dx + dy * dy)
 
         # Drain energy — faster and bigger creatures use more energy
         # Energy cost does NOT scale with biome multiplier
@@ -311,8 +319,9 @@ class Creature:
             * dt
             * 60
         )
-        # Small idle cost so creatures can't survive by standing still forever
-        idle_cost = 0.05 * dt * 60
+        # Idle cost scales with turning — spinning in place is expensive.
+        # Base idle cost + extra proportional to turn angle (last_turn is 0..pi).
+        idle_cost = 0.05 * (1.0 + self.last_turn) * dt * 60
         self.energy -= energy_cost + idle_cost
 
         # Track age

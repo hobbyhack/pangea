@@ -66,6 +66,7 @@ class SpeciesSettings:
     fitness_energy_weight: float = config.FITNESS_ENERGY_WEIGHT
     territory_fitness_weight: float = 0.0
     fitness_offspring_weight: float = config.FITNESS_OFFSPRING_WEIGHT
+    fitness_distance_weight: float = config.FITNESS_DISTANCE_WEIGHT
 
     # ── Extinction ────────────────────────────────────────────
     extinction_mode: str = EXTINCTION_RESPAWN_BEST

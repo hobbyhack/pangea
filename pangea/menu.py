@@ -888,6 +888,8 @@ class Menu:
          "Area explored contribution to fitness score."),
         ("fitness_offspring_weight", "Offspring Weight", 0.0, 20.0, 0.5, ".1f", "ss",
          "Breeding success contribution to fitness score."),
+        ("fitness_distance_weight", "Distance Weight", 0.0, 2.0, 0.05, ".2f", "ss",
+         "Distance traveled contribution to fitness (rewards movement over spinning)."),
     ]
 
     # Tooltip descriptions for diet flag toggles
@@ -1832,7 +1834,7 @@ class Menu:
         self,
         directory: str,
         title: str = "SELECT FILE",
-        hint: str = "Left-click: load  |  Right-click: delete  |  Scroll for more",
+        hint: str = "Click: load  |  Right-click: delete  |  Scroll for more",
         allow_import: bool = True,
         name_transform=None,
     ) -> str | None:
@@ -1904,6 +1906,21 @@ class Menu:
                         fi = idx + scroll
                         item_rect = pygame.Rect(30, 80 + idx * 40, config.WINDOW_WIDTH - 60, 36)
                         if item_rect.collidepoint(mx, my):
+                            # Rename button (right side of row)
+                            rename_rect = pygame.Rect(
+                                item_rect.right - 70, item_rect.y + 6, 60, 24,
+                            )
+                            if rename_rect.collidepoint(mx, my) and event.button == 1:
+                                old_name = files[fi].stem
+                                new_name = self._show_text_input("Rename:", old_name)
+                                if new_name and new_name != old_name:
+                                    safe = "".join(
+                                        c if c.isalnum() or c in "-_ " else "_"
+                                        for c in new_name
+                                    )
+                                    new_path = files[fi].parent / f"{safe}.json"
+                                    files[fi].rename(new_path)
+                                break
                             if event.button == 1:  # Left click - select
                                 return str(files[fi])
                             elif event.button == 3:  # Right click - delete
@@ -1935,14 +1952,26 @@ class Menu:
                     ft = self.font_small.render(display, True, (180, 185, 200))
                     self.surface.blit(ft, (item_rect.x + 10, item_rect.y + 4))
 
-                    # Modification timestamp
+                    # Modification timestamp (shifted left to make room for rename)
                     mtime = f.stat().st_mtime
                     ts = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(mtime))
                     ts_surf = self.font_small.render(ts, True, (90, 95, 115))
                     self.surface.blit(
                         ts_surf,
-                        (item_rect.right - ts_surf.get_width() - 10, item_rect.y + 4),
+                        (item_rect.right - ts_surf.get_width() - 80, item_rect.y + 4),
                     )
+
+                    # Rename button
+                    rename_rect = pygame.Rect(
+                        item_rect.right - 70, item_rect.y + 6, 60, 24,
+                    )
+                    rh = rename_rect.collidepoint(mouse_pos)
+                    pygame.draw.rect(
+                        self.surface, (50, 55, 75) if rh else (35, 38, 52),
+                        rename_rect, border_radius=4,
+                    )
+                    rt = self.font_small.render("Rename", True, (160, 165, 185))
+                    self.surface.blit(rt, rt.get_rect(center=rename_rect.center))
 
                 # Scroll indicator
                 if len(files) > max_visible:

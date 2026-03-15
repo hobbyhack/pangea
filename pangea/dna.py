@@ -181,11 +181,15 @@ class DNA:
             traits[0] += EVOLUTION_POINTS - total
 
         # Random neural network weights
+        # Bias the thrust output (b2[1]) positive so generation-0 creatures
+        # default to moving forward rather than idling or spinning.
+        b2 = np.zeros(NN_OUTPUT_SIZE)
+        b2[1] = 0.5  # nudge thrust toward positive (tanh(0.5) ≈ 0.46)
         weights = [
             np.random.randn(NN_INPUT_SIZE, NN_HIDDEN_SIZE) * 0.5,
             np.zeros(NN_HIDDEN_SIZE),
             np.random.randn(NN_HIDDEN_SIZE, NN_OUTPUT_SIZE) * 0.5,
-            np.zeros(NN_OUTPUT_SIZE),
+            b2,
         ]
 
         return cls(
