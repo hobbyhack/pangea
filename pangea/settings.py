@@ -40,34 +40,47 @@ class SimSettings:
     trait_mutation_range: int = config.TRAIT_MUTATION_RANGE
     weight_clamp: float = 0.0
 
-    # ── World / Play Area ─────────────────────────────────────
+    # ── World ─────────────────────────────────────────────────
     world_width: int = config.WORLD_WIDTH
     world_height: int = config.WORLD_HEIGHT
+    world_wrap: bool = config.WORLD_WRAP
+    biomes_enabled: bool = config.BIOMES_ENABLED
+    biome_count: int = config.BIOME_COUNT
 
     # ── Food ───────────────────────────────────────────────────
+    initial_food_count: int = config.INITIAL_FOOD_COUNT
     food_spawn_rate: float = config.FOOD_SPAWN_RATE
     food_energy: float = config.FOOD_ENERGY
-    initial_food_count: int = config.INITIAL_FOOD_COUNT
-    world_wrap: bool = config.WORLD_WRAP
     food_decay_time: float = config.FOOD_DECAY_TIME
-    corpse_decay_time: float = config.CORPSE_DECAY_TIME
     food_cluster_size: int = config.FOOD_CLUSTER_SIZE
     food_respawn_chance: float = config.FOOD_RESPAWN_CHANCE
     food_min: int = config.FOOD_MIN
     food_max: int = config.FOOD_MAX
+    corpse_decay_time: float = config.CORPSE_DECAY_TIME
+    season_enabled: bool = config.SEASON_ENABLED
     season_length: float = config.SEASON_LENGTH
     season_min_rate: float = config.SEASON_MIN_RATE
 
-    # ── Biomes / Terrain ─────────────────────────────────────
-    biome_count: int = config.BIOME_COUNT
-
-    # ── Creature Physics ─────────────────────────────────────
+    # ── Creatures ─────────────────────────────────────────────
     base_energy: float = config.BASE_ENERGY
     energy_cost_per_thrust: float = config.ENERGY_COST_PER_THRUST
     turn_cost: float = 0.0
-
-    # ── Food Healing ──────────────────────────────────────────
     food_heal: float = 0.0
+
+    # ── Day/Night Cycle ───────────────────────────────────────
+    day_night_enabled: bool = config.DAY_NIGHT_ENABLED
+    day_night_cycle_length: float = config.DAY_NIGHT_CYCLE_LENGTH
+    night_vision_multiplier: float = config.NIGHT_VISION_MULTIPLIER
+
+    # ── Threats (Hazards & Predators) ─────────────────────────
+    hazard_count: int = config.HAZARD_COUNT
+    predator_count: int = config.PREDATOR_COUNT
+    predator_speed: float = config.PREDATOR_SPEED
+    predator_vision: float = config.PREDATOR_VISION
+    predator_damage: float = config.PREDATOR_DAMAGE
+    predator_radius: float = config.PREDATOR_RADIUS
+    predator_stamina: float = 0.0
+    predator_respawn_interval: float = 0.0
 
     # ── Fitness Weights ────────────────────────────────────────
     fitness_food_weight: float = config.FITNESS_FOOD_WEIGHT
@@ -78,22 +91,6 @@ class SimSettings:
 
     # ── Convergence ──────────────────────────────────────────
     convergence_max_generations: int = config.CONVERGENCE_MAX_GENERATIONS
-
-    # ── Day/Night Cycle ───────────────────────────────────────
-    day_night_cycle_length: float = config.DAY_NIGHT_CYCLE_LENGTH
-    night_vision_multiplier: float = config.NIGHT_VISION_MULTIPLIER
-
-    # ── Hazards ────────────────────────────────────────────────
-    hazard_count: int = config.HAZARD_COUNT
-
-    # ── Predators ──────────────────────────────────────────────
-    predator_count: int = config.PREDATOR_COUNT
-    predator_speed: float = config.PREDATOR_SPEED
-    predator_vision: float = config.PREDATOR_VISION
-    predator_damage: float = config.PREDATOR_DAMAGE
-    predator_radius: float = config.PREDATOR_RADIUS
-    predator_stamina: float = 0.0
-    predator_respawn_interval: float = 0.0
 
     # ── Freeplay Mode ──────────────────────────────────────────
     freeplay_initial_population: int = config.FREEPLAY_INITIAL_POPULATION
@@ -163,7 +160,7 @@ class SettingDef:
 
 # Settings organized by category for the UI panel
 SETTING_DEFS: list[SettingDef] = [
-    # Population
+    # ── Population ───────────────────────────────────────────
     SettingDef("population_size", "Population Size", 10, 200, 10, ".0f", "Population",
                tooltip="Number of creatures spawned each generation"),
     SettingDef("generation_time_limit", "Gen Time (sec)", 10, 120, 5, ".0f", "Population",
@@ -176,7 +173,7 @@ SETTING_DEFS: list[SettingDef] = [
                tooltip="If fewer than this many survive, the run ends as an extinction event (0 = off)"),
     SettingDef("max_generations", "Max Generations", 0, 500, 10, ".0f", "Population",
                tooltip="Stop the simulation after this many generations (0 = unlimited)"),
-    # Mutation
+    # ── Mutation ─────────────────────────────────────────────
     SettingDef("mutation_rate", "Mutation Rate", 0.01, 1.0, 0.05, ".2f", "Mutation",
                tooltip="Probability each neural-network weight is mutated per offspring"),
     SettingDef("mutation_strength", "Mutation Strength", 0.05, 2.0, 0.05, ".2f", "Mutation",
@@ -187,63 +184,72 @@ SETTING_DEFS: list[SettingDef] = [
                tooltip="Max points a trait (speed/size/vision/efficiency) can shift per generation"),
     SettingDef("weight_clamp", "Weight Clamp", 0.0, 10.0, 0.5, ".1f", "Mutation",
                tooltip="Clamp NN weights to [-value, +value] after mutation (0 = no clamping)"),
-    # Environment
-    SettingDef("food_spawn_rate", "Food Spawn Rate", 0.0, 5.0, 0.1, ".1f", "Environment",
-               tooltip="New food items spawned per second during a generation"),
-    SettingDef("food_energy", "Food Energy", 5, 100, 5, ".0f", "Environment",
-               tooltip="Energy a creature gains from eating one food item"),
-    SettingDef("initial_food_count", "Initial Food", 0, 100, 5, ".0f", "Environment",
-               tooltip="Food items placed on the map at the start of each generation"),
-    SettingDef("base_energy", "Start Energy", 20, 500, 10, ".0f", "Environment",
-               tooltip="Energy each creature starts with; reaching 0 means death"),
-    SettingDef("energy_cost_per_thrust", "Move Cost", 0.01, 0.5, 0.01, ".2f", "Environment",
-               tooltip="Energy drained per unit of forward thrust (scaled by creature size)"),
-    SettingDef("turn_cost", "Turn Cost", 0.0, 0.5, 0.01, ".2f", "Environment",
-               tooltip="Extra energy cost for turning (0 = turning is free)"),
-    SettingDef("food_decay_time", "Food Decay (sec)", 5, 60, 5, ".0f", "Environment",
-               tooltip="Seconds before an uneaten food item disappears"),
-    SettingDef("corpse_decay_time", "Corpse Decay (sec)", 3, 60, 1, ".0f", "Environment",
-               tooltip="Seconds before a dead creature's corpse disappears (scavenger food)"),
-    SettingDef("food_cluster_size", "Cluster Size", 1, 10, 1, ".0f", "Environment",
-               tooltip="Food spawns in clusters of this many items"),
-    SettingDef("food_respawn_chance", "Food Respawn %", 0.0, 1.0, 0.05, ".0%", "Environment",
-               tooltip="Chance a new food spawns at a random location when one is eaten"),
-    SettingDef("food_min", "Food Min", 0, 200, 5, ".0f", "Environment",
-               tooltip="Minimum food items on the map — spawns extra if below this (0 = off)"),
-    SettingDef("food_max", "Food Max", 0, 500, 10, ".0f", "Environment",
-               tooltip="Maximum food items on the map — stops spawning above this (0 = no limit)"),
-    SettingDef("food_heal", "Food Heal (sec)", 0.0, 10.0, 0.5, ".1f", "Environment",
-               tooltip="Seconds of predator-damage immunity after eating (0 = none)"),
-    SettingDef("season_length", "Season Length (s)", 10, 300, 10, ".0f", "Environment",
-               tooltip="Duration of one full season cycle (food rate oscillates over this period)"),
-    SettingDef("season_min_rate", "Season Min Rate", 0.0, 1.0, 0.05, ".2f", "Environment",
-               tooltip="Food spawn rate multiplier at the trough of the season cycle"),
-    SettingDef("biome_count", "Biome Count", 0, 10, 1, ".0f", "Environment",
-               tooltip="Number of distinct terrain biomes on the map (0 = uniform terrain)"),
-    SettingDef("world_wrap", "World Wrap", 0, 1, 1, ".0f", "Environment", widget_type="toggle",
+    # ── World ────────────────────────────────────────────────
+    SettingDef("world_wrap", "World Wrap", 0, 1, 1, ".0f", "World", widget_type="toggle",
                tooltip="Creatures exiting one edge reappear on the opposite side"),
-    # Day/Night
-    SettingDef("day_night_cycle_length", "Day/Night Cycle (s)", 10, 300, 10, ".0f", "Environment",
+    SettingDef("biomes_enabled", "Biomes", 0, 1, 1, ".0f", "World", widget_type="toggle",
+               tooltip="Enable terrain biome regions (water, desert, forest, etc.)"),
+    SettingDef("biome_count", "Biome Count", 0, 10, 1, ".0f", "World",
+               tooltip="Number of distinct terrain biomes on the map (0 = uniform terrain)"),
+    # ── Food ─────────────────────────────────────────────────
+    SettingDef("initial_food_count", "Initial Food", 0, 100, 5, ".0f", "Food",
+               tooltip="Food items placed on the map at the start of each generation"),
+    SettingDef("food_spawn_rate", "Food Spawn Rate", 0.0, 5.0, 0.1, ".1f", "Food",
+               tooltip="New food items spawned per second during a generation"),
+    SettingDef("food_energy", "Food Energy", 5, 100, 5, ".0f", "Food",
+               tooltip="Energy a creature gains from eating one food item"),
+    SettingDef("food_decay_time", "Food Decay (sec)", 5, 60, 5, ".0f", "Food",
+               tooltip="Seconds before an uneaten food item disappears"),
+    SettingDef("food_cluster_size", "Cluster Size", 1, 10, 1, ".0f", "Food",
+               tooltip="Food spawns in clusters of this many items"),
+    SettingDef("food_respawn_chance", "Food Respawn %", 0.0, 1.0, 0.05, ".0%", "Food",
+               tooltip="Chance a new food spawns at a random location when one is eaten"),
+    SettingDef("food_min", "Food Min", 0, 200, 5, ".0f", "Food",
+               tooltip="Minimum food items on the map — spawns extra if below this (0 = off)"),
+    SettingDef("food_max", "Food Max", 0, 500, 10, ".0f", "Food",
+               tooltip="Maximum food items on the map — stops spawning above this (0 = no limit)"),
+    SettingDef("corpse_decay_time", "Corpse Decay (sec)", 3, 60, 1, ".0f", "Food",
+               tooltip="Seconds before a dead creature's corpse disappears (scavenger food)"),
+    SettingDef("season_enabled", "Seasons", 0, 1, 1, ".0f", "Food", widget_type="toggle",
+               tooltip="Enable seasonal food spawn oscillation"),
+    SettingDef("season_length", "Season Length (s)", 10, 300, 10, ".0f", "Food",
+               tooltip="Duration of one full season cycle (food rate oscillates over this period)"),
+    SettingDef("season_min_rate", "Season Min Rate", 0.0, 1.0, 0.05, ".2f", "Food",
+               tooltip="Food spawn rate multiplier at the trough of the season cycle"),
+    # ── Creatures ────────────────────────────────────────────
+    SettingDef("base_energy", "Start Energy", 20, 500, 10, ".0f", "Creatures",
+               tooltip="Energy each creature starts with; reaching 0 means death"),
+    SettingDef("energy_cost_per_thrust", "Move Cost", 0.01, 0.5, 0.01, ".2f", "Creatures",
+               tooltip="Energy drained per unit of forward thrust (scaled by creature size)"),
+    SettingDef("turn_cost", "Turn Cost", 0.0, 0.5, 0.01, ".2f", "Creatures",
+               tooltip="Extra energy cost for turning (0 = turning is free)"),
+    SettingDef("food_heal", "Food Heal (sec)", 0.0, 10.0, 0.5, ".1f", "Creatures",
+               tooltip="Seconds of predator-damage immunity after eating (0 = none)"),
+    # ── Day/Night ────────────────────────────────────────────
+    SettingDef("day_night_enabled", "Day/Night Cycle", 0, 1, 1, ".0f", "Day/Night", widget_type="toggle",
+               tooltip="Enable the day/night cycle (darkness overlay and vision reduction)"),
+    SettingDef("day_night_cycle_length", "Day/Night Cycle (s)", 10, 300, 10, ".0f", "Day/Night",
                tooltip="Length of a full day/night cycle in seconds"),
-    SettingDef("night_vision_multiplier", "Night Vision", 0.0, 1.0, 0.05, ".2f", "Environment",
+    SettingDef("night_vision_multiplier", "Night Vision", 0.0, 1.0, 0.05, ".2f", "Day/Night",
                tooltip="Vision range multiplier during nighttime (1.0 = no reduction)"),
-    SettingDef("hazard_count", "Hazard Zones", 0, 10, 1, ".0f", "Environment",
+    # ── Threats ──────────────────────────────────────────────
+    SettingDef("hazard_count", "Hazard Zones", 0, 10, 1, ".0f", "Threats",
                tooltip="Number of damaging hazard zones placed on the map"),
-    SettingDef("predator_count", "Predators", 0, 10, 1, ".0f", "Predators",
+    SettingDef("predator_count", "Predators", 0, 10, 1, ".0f", "Threats",
                tooltip="Number of AI-controlled predators that hunt creatures"),
-    SettingDef("predator_speed", "Predator Speed", 0.5, 5.0, 0.5, ".1f", "Predators",
+    SettingDef("predator_speed", "Predator Speed", 0.5, 5.0, 0.5, ".1f", "Threats",
                tooltip="Movement speed of predators (higher = harder to outrun)"),
-    SettingDef("predator_vision", "Predator Vision", 50, 400, 25, ".0f", "Predators",
+    SettingDef("predator_vision", "Predator Vision", 50, 400, 25, ".0f", "Threats",
                tooltip="How far predators can detect creatures (in pixels)"),
-    SettingDef("predator_damage", "Predator Damage", 1.0, 20.0, 1.0, ".1f", "Predators",
+    SettingDef("predator_damage", "Predator Damage", 1.0, 20.0, 1.0, ".1f", "Threats",
                tooltip="Energy drained from a creature per predator hit"),
-    SettingDef("predator_radius", "Predator Size", 4.0, 20.0, 1.0, ".0f", "Predators",
+    SettingDef("predator_radius", "Predator Size", 4.0, 20.0, 1.0, ".0f", "Threats",
                tooltip="Collision radius of predators (larger = harder to dodge)"),
-    SettingDef("predator_stamina", "Predator Stamina", 0.0, 30.0, 1.0, ".0f", "Predators",
+    SettingDef("predator_stamina", "Predator Stamina", 0.0, 30.0, 1.0, ".0f", "Threats",
                tooltip="Seconds a predator can chase before resting (0 = infinite stamina)"),
-    SettingDef("predator_respawn_interval", "Predator Respawn", 0.0, 60.0, 5.0, ".0f", "Predators",
+    SettingDef("predator_respawn_interval", "Predator Respawn", 0.0, 60.0, 5.0, ".0f", "Threats",
                tooltip="Seconds before a killed predator respawns (0 = predators are immortal)"),
-    # Fitness
+    # ── Fitness ──────────────────────────────────────────────
     SettingDef("fitness_food_weight", "Food Weight", 0.0, 50.0, 1.0, ".1f", "Fitness",
                tooltip="How much food eaten contributes to a creature's fitness score"),
     SettingDef("fitness_time_weight", "Survival Weight", 0.0, 5.0, 0.05, ".2f", "Fitness",
@@ -254,7 +260,7 @@ SETTING_DEFS: list[SettingDef] = [
                tooltip="How much area explored contributes to fitness (rewards exploration)"),
     SettingDef("fitness_offspring_weight", "Offspring Weight", 0.0, 20.0, 0.5, ".1f", "Fitness",
                tooltip="How much breeding success contributes to fitness (rewards creatures that reproduced)"),
-    # Freeplay
+    # ── Freeplay ─────────────────────────────────────────────
     SettingDef("freeplay_initial_population", "Initial Population", 10, 100, 5, ".0f", "Freeplay",
                tooltip="Number of random creatures at the start of freeplay"),
     SettingDef("freeplay_carrying_capacity", "Carrying Capacity", 20, 200, 10, ".0f", "Freeplay",

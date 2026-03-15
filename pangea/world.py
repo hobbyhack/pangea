@@ -213,8 +213,9 @@ class World:
 
         # Generate biome regions
         self.biomes: list[Biome] = []
-        for _ in range(self.settings.biome_count):
-            self.biomes.append(self._random_biome())
+        if self.settings.biomes_enabled:
+            for _ in range(self.settings.biome_count):
+                self.biomes.append(self._random_biome())
 
         # Generate predators
         self.predators: list[Predator] = []
@@ -268,6 +269,8 @@ class World:
     @property
     def daylight_factor(self) -> float:
         """Return a value from 0.0 (full night) to 1.0 (full day)."""
+        if not self.settings.day_night_enabled:
+            return 1.0
         cycle = self.settings.day_night_cycle_length
         return 0.5 + 0.5 * math.sin(2 * math.pi * self.day_night_time / cycle)
 
@@ -391,6 +394,8 @@ class World:
 
     def seasonal_multiplier(self) -> float:
         """Compute the current seasonal food spawn multiplier."""
+        if not self.settings.season_enabled:
+            return 1.0
         season_length = self.settings.season_length
         min_rate = self.settings.season_min_rate
         return min_rate + (1 - min_rate) * (

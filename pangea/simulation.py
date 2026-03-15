@@ -807,18 +807,22 @@ class Simulation:
             # Update simulation
             if not self.paused:
                 if self.fast_forward:
+                    # Use fixed timestep to avoid dt inflation from slow frames
+                    step_dt = 1.0 / FPS
                     for _ in range(self.fast_forward_multiplier):
-                        world.update(dt)
+                        world.update(step_dt)
                         world.check_breeding()
+                    sim_dt = step_dt * self.fast_forward_multiplier
                 else:
                     world.update(dt)
                     world.check_breeding()
+                    sim_dt = dt
 
-                self._freeplay_elapsed += dt
+                self._freeplay_elapsed += sim_dt
 
                 # Periodic cleanup and stats
-                self._freeplay_stats_timer += dt
-                self._freeplay_history_timer += dt
+                self._freeplay_stats_timer += sim_dt
+                self._freeplay_history_timer += sim_dt
                 if self._freeplay_stats_timer >= 5.0:
                     world.remove_dead_creatures(min_dead_age=3.0)
                     # Update rolling birth/death rates
@@ -1035,9 +1039,10 @@ class Simulation:
             # Update simulation (skip if paused)
             if not self.paused:
                 if self.fast_forward:
-                    # Run multiple simulation steps per frame for actual speedup
+                    # Use fixed timestep to avoid dt inflation from slow frames
+                    step_dt = 1.0 / FPS
                     for _ in range(self.fast_forward_multiplier):
-                        world.update(dt)
+                        world.update(step_dt)
                         if world.is_generation_over():
                             break
                 else:
@@ -1278,8 +1283,9 @@ class Simulation:
 
             if not self.paused:
                 if self.fast_forward:
+                    step_dt = 1.0 / FPS
                     for _ in range(self.fast_forward_multiplier):
-                        world.update(dt)
+                        world.update(step_dt)
                         if world.is_generation_over():
                             break
                 else:
@@ -1465,16 +1471,19 @@ class Simulation:
 
             if not self.paused:
                 if self.fast_forward:
+                    step_dt = 1.0 / FPS
                     for _ in range(self.fast_forward_multiplier):
-                        world.update(dt)
+                        world.update(step_dt)
                         world.check_breeding()
+                    sim_dt = step_dt * self.fast_forward_multiplier
                 else:
                     world.update(dt)
                     world.check_breeding()
+                    sim_dt = dt
 
-                self._freeplay_elapsed += dt
-                self._freeplay_stats_timer += dt
-                self._freeplay_history_timer += dt
+                self._freeplay_elapsed += sim_dt
+                self._freeplay_stats_timer += sim_dt
+                self._freeplay_history_timer += sim_dt
 
                 if self._freeplay_stats_timer >= 5.0:
                     world.remove_dead_creatures(min_dead_age=3.0)

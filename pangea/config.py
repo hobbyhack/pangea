@@ -50,6 +50,7 @@ FOOD_MIN = 0                 # Minimum food items on the map (0 = no minimum)
 FOOD_MAX = 0                 # Maximum food items on the map (0 = no limit)
 SEASON_LENGTH = 60.0         # Seconds per full seasonal cycle
 SEASON_MIN_RATE = 0.2        # Multiplier at seasonal minimum
+SEASON_ENABLED = True        # Whether seasonal food oscillation is active
 
 # ── Creature Physics ─────────────────────────────────────────
 BASE_ENERGY = 100.0          # Starting energy for each creature
@@ -89,6 +90,7 @@ CREATURES_PER_LINEAGE = 25        # Creatures per lineage in convergence mode
 
 # ── Day/Night Cycle ────────────────────────────────────────
 DAY_NIGHT_CYCLE_LENGTH = 90.0     # Seconds for one full day/night cycle
+DAY_NIGHT_ENABLED = True          # Whether day/night cycle is active
 NIGHT_VISION_MULTIPLIER = 0.3     # Vision multiplier at darkest point (0.0–1.0)
 
 # ── Hazards / Obstacles ─────────────────────────────────────
@@ -98,6 +100,7 @@ HAZARD_MAX_RADIUS = 60.0       # Maximum hazard zone radius in pixels
 HAZARD_DAMAGE = 2.0            # Energy drained per second at the hazard center
 
 # ── Biomes / Terrain ────────────────────────────────────────
+BIOMES_ENABLED = True        # Whether biome regions are generated
 BIOME_COUNT = 4              # Number of biome regions generated per world
 BIOME_MIN_RADIUS = 80.0      # Minimum biome circle radius in pixels
 BIOME_MAX_RADIUS = 150.0     # Maximum biome circle radius in pixels
