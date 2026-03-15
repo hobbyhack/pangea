@@ -1083,13 +1083,11 @@ class Menu:
 
     def show_join_dialog(self) -> tuple[str, str] | None:
         """
-        Show join game dialog — enter room code and relay URL.
+        Show join game dialog — enter room code and host IP.
 
         Returns:
             Tuple of (room_code, relay_url) or None if cancelled.
         """
-        from pangea.config import NET_DEFAULT_RELAY
-
         # Get room code
         room_code = self._show_text_input("Enter Room Code:")
         if not room_code:
@@ -1097,14 +1095,23 @@ class Menu:
 
         room_code = room_code.strip().upper()
 
-        # Get relay URL (with default)
-        relay_url = self._show_text_input("Relay Server URL:", NET_DEFAULT_RELAY)
-        if not relay_url:
+        # Get host IP address (default to localhost for same-machine testing)
+        host_ip = self._show_text_input("Host IP Address:", "localhost")
+        if not host_ip:
             return None
 
-        return (room_code, relay_url.strip())
+        host_ip = host_ip.strip()
 
-    def show_waiting_room(self, room_code: str, player_count: int) -> str | None:
+        # Build the websocket URL from the IP
+        # If user entered a full ws:// URL, use it as-is
+        if host_ip.startswith("ws://") or host_ip.startswith("wss://"):
+            relay_url = host_ip
+        else:
+            relay_url = f"ws://{host_ip}:8765"
+
+        return (room_code, relay_url)
+
+    def show_waiting_room(self, room_code: str, player_count: int, host_ip: str = "") -> str | None:
         """
         Show the waiting room screen while host waits for clients.
 
@@ -1113,6 +1120,7 @@ class Menu:
         Args:
             room_code:    The room code to display.
             player_count: Number of connected clients.
+            host_ip:      The host's LAN IP to display.
 
         Returns:
             "start" if Start pressed, "cancel" if cancelled, None to keep waiting.
@@ -1179,10 +1187,17 @@ class Menu:
         ct = self.font.render("Cancel", True, (220, 230, 240))
         self.surface.blit(ct, ct.get_rect(center=cancel_rect.center))
 
+        # Host IP display
+        if host_ip:
+            ip_label = self.font_small.render("Your IP Address:", True, (120, 130, 150))
+            self.surface.blit(ip_label, ip_label.get_rect(center=(cx, cy + 140)))
+            ip_text = self.font.render(host_ip, True, (200, 220, 180))
+            self.surface.blit(ip_text, ip_text.get_rect(center=(cx, cy + 165)))
+
         hint = self.font_small.render(
-            "Share the room code with other players", True, (100, 110, 130)
+            "Share the room code and IP with other players", True, (100, 110, 130)
         )
-        self.surface.blit(hint, hint.get_rect(center=(cx, cy + 150)))
+        self.surface.blit(hint, hint.get_rect(center=(cx, cy + 195)))
 
         pygame.display.flip()
         return None

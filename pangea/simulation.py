@@ -229,12 +229,24 @@ class Simulation:
                         self._embedded_relay = None
                     continue
 
+                # Get host LAN IP for display
+                import socket
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    host_ip = s.getsockname()[0]
+                    s.close()
+                except Exception:
+                    host_ip = "unknown"
+
                 # Waiting room loop
                 waiting = True
                 start_game = False
                 while waiting:
+                    # Poll network so join notifications arrive
+                    self._net_host.poll_incoming()
                     wr = self.menu.show_waiting_room(
-                        room_code, self._net_host.player_count
+                        room_code, self._net_host.player_count, host_ip
                     )
                     if wr == "start":
                         start_game = True
@@ -1552,17 +1564,15 @@ class Simulation:
         """Run as a network client — receive snapshots, send tool actions."""
         assert self._net_client is not None
 
-        # Wait for full state from host
-        self.menu.show_connecting("Waiting for game state...")
+        # Wait for full state from host (no timeout — host may still be in waiting room)
         world = None
         mode = "isolation"
         generation = 1
-        timeout = 30.0
-        wait_elapsed = 0.0
 
-        while world is None and wait_elapsed < timeout:
-            dt = self.clock.tick(30) / 1000.0
-            wait_elapsed += dt
+        while world is None:
+            self.clock.tick(30)
+            self.menu.show_connecting("Waiting for host to start the game...  (ESC to cancel)")
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return
@@ -1577,7 +1587,6 @@ class Simulation:
                     break
                 elif msg.get("t") == MsgType.SNAPSHOT:
                     # Got a snapshot before full_state — create minimal world
-                    from pangea.dna import DNA as _DNA
                     world = World([], settings=self.settings, tools=self.tools)
                     self._active_world = world
                     apply_snapshot(world, msg)
@@ -1589,10 +1598,6 @@ class Simulation:
             if not self._net_client.connected:
                 self.menu.show_error("Lost connection to server.")
                 return
-
-        if world is None:
-            self.menu.show_error("Timed out waiting for game state.")
-            return
 
         self._active_world = world
         self.tools = PlayerTools()
