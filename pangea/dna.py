@@ -123,12 +123,20 @@ class DNA:
     @classmethod
     def from_dict(cls, data: dict) -> DNA:
         """Reconstruct DNA from a dictionary (loaded from JSON)."""
-        weights = [
-            np.array(data["weights"]["W1"]),
-            np.array(data["weights"]["b1"]),
-            np.array(data["weights"]["W2"]),
-            np.array(data["weights"]["b2"]),
-        ]
+        from pangea.config import NN_INPUT_SIZE, NN_HIDDEN_SIZE
+
+        W1 = np.array(data["weights"]["W1"])
+        b1 = np.array(data["weights"]["b1"])
+        W2 = np.array(data["weights"]["W2"])
+        b2 = np.array(data["weights"]["b2"])
+
+        # Migrate old weight dimensions: pad W1 rows if input size grew
+        old_inputs = W1.shape[0]
+        if old_inputs < NN_INPUT_SIZE:
+            pad = np.random.randn(NN_INPUT_SIZE - old_inputs, NN_HIDDEN_SIZE) * 0.5
+            W1 = np.vstack([W1, pad])
+
+        weights = [W1, b1, W2, b2]
         return cls(
             weights=weights,
             speed=data["speed"],

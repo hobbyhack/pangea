@@ -736,12 +736,20 @@ class World:
                         predator.y = biome.y + ny * biome.radius
         self._check_predator_collisions(dt)
 
-        # Predator respawn
+        # Sync predator count with settings
+        desired = self.settings.predator_count
+        while len(self.predators) < desired:
+            self.predators.append(self._spawn_predator())
+        while len(self.predators) > desired:
+            self.predators.pop()
+
+        # Predator respawn (replace killed predators over time)
         if self.settings.predator_respawn_interval > 0:
             self._predator_respawn_timer += dt
             if self._predator_respawn_timer >= self.settings.predator_respawn_interval:
                 self._predator_respawn_timer = 0.0
-                self.predators.append(self._spawn_predator())
+                if len(self.predators) < desired:
+                    self.predators.append(self._spawn_predator())
 
         # Reward scavengers near deaths
         # Collect newly dead after all damage (predator + carnivore + hazard)
