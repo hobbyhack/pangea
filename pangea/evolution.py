@@ -26,6 +26,7 @@ from pangea.config import (
     EVOLUTION_POINTS,
     FITNESS_ENERGY_WEIGHT,
     FITNESS_FOOD_WEIGHT,
+    FITNESS_OFFSPRING_WEIGHT,
     FITNESS_TIME_WEIGHT,
     MUTATION_RATE,
     MUTATION_STRENGTH,
@@ -55,19 +56,23 @@ def evaluate_fitness(
     Fitness = (food_eaten * food_weight) + (survival_time * time_weight)
               + (remaining_energy * energy_weight)
               + (territory_cells * territory_weight)
+              + (offspring_count * offspring_weight)
 
     Food eaten is weighted most heavily because it's the primary survival skill.
+    Offspring weight rewards creatures that successfully reproduced.
     Weights come from settings if provided, otherwise from config defaults.
     """
     food_w = settings.fitness_food_weight if settings else FITNESS_FOOD_WEIGHT
     time_w = settings.fitness_time_weight if settings else FITNESS_TIME_WEIGHT
     energy_w = settings.fitness_energy_weight if settings else FITNESS_ENERGY_WEIGHT
     territory_w = settings.territory_fitness_weight if settings else 0.0
+    offspring_w = settings.fitness_offspring_weight if settings else FITNESS_OFFSPRING_WEIGHT
     return (
         creature.food_eaten * food_w
         + creature.age * time_w
         + creature.energy * energy_w
         + len(creature.territory_cells) * territory_w
+        + creature.offspring_count * offspring_w
     )
 
 

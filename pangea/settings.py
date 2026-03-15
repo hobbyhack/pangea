@@ -74,6 +74,7 @@ class SimSettings:
     fitness_time_weight: float = config.FITNESS_TIME_WEIGHT
     fitness_energy_weight: float = config.FITNESS_ENERGY_WEIGHT
     territory_fitness_weight: float = 0.0
+    fitness_offspring_weight: float = config.FITNESS_OFFSPRING_WEIGHT
 
     # ── Convergence ──────────────────────────────────────────
     convergence_max_generations: int = config.CONVERGENCE_MAX_GENERATIONS
@@ -251,6 +252,8 @@ SETTING_DEFS: list[SettingDef] = [
                tooltip="How much remaining energy at death contributes to fitness"),
     SettingDef("territory_fitness_weight", "Territory Weight", 0.0, 5.0, 0.1, ".1f", "Fitness",
                tooltip="How much area explored contributes to fitness (rewards exploration)"),
+    SettingDef("fitness_offspring_weight", "Offspring Weight", 0.0, 20.0, 0.5, ".1f", "Fitness",
+               tooltip="How much breeding success contributes to fitness (rewards creatures that reproduced)"),
     # Freeplay
     SettingDef("freeplay_initial_population", "Initial Population", 10, 100, 5, ".0f", "Freeplay",
                tooltip="Number of random creatures at the start of freeplay"),

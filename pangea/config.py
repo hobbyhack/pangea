@@ -81,6 +81,7 @@ NN_OUTPUT_SIZE = 2           # Outputs: turn angle, thrust
 FITNESS_FOOD_WEIGHT = 10.0   # Points per food item eaten
 FITNESS_TIME_WEIGHT = 0.1    # Points per second survived
 FITNESS_ENERGY_WEIGHT = 0.05 # Points per unit of remaining energy
+FITNESS_OFFSPRING_WEIGHT = 5.0  # Points per offspring produced
 
 # ── Convergence Mode ─────────────────────────────────────────
 CONVERGENCE_MAX_GENERATIONS = 50  # Max generations before declaring a winner
