@@ -210,7 +210,7 @@ class Simulation:
 
                 # Start embedded relay server automatically
                 try:
-                    self._embedded_relay = EmbeddedRelay("127.0.0.1", relay_port)
+                    self._embedded_relay = EmbeddedRelay("0.0.0.0", relay_port)
                     self._embedded_relay.start()
                 except Exception as exc:
                     self.menu.show_error(f"Failed to start relay: {exc}")
@@ -1064,6 +1064,15 @@ class Simulation:
         world.generation = generation
         frame_counter = 0
 
+        # Send initial full state to all connected clients
+        if self._net_host:
+            self._net_host.broadcast_full_state(
+                full_state_from_world(
+                    world, self.settings, self.tools,
+                    "isolation", generation, self.generation_history,
+                )
+            )
+
         while self.running:
             if (self.settings.max_generations > 0
                     and generation > self.settings.max_generations):
@@ -1736,10 +1745,11 @@ class Simulation:
         elif msg_type == MsgType.CLIENT_JOINED:
             # Send full state to newly joined client
             if self._net_host:
+                mode = "freeplay" if world.freeplay else "isolation"
                 self._net_host.broadcast_full_state(
                     full_state_from_world(
                         world, self.settings, self.tools,
-                        "isolation", world.generation, self.generation_history,
+                        mode, world.generation, self.generation_history,
                     )
                 )
 

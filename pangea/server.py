@@ -180,7 +180,7 @@ class EmbeddedRelay:
     need a separate process.
     """
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8765) -> None:
+    def __init__(self, host: str = "0.0.0.0", port: int = 8765) -> None:
         self._host = host
         self._port = port
         self._thread: threading.Thread | None = None
