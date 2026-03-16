@@ -824,8 +824,9 @@ class Menu:
 
     # Species slider definitions: (attr_name, label, min, max, step, fmt, target, tooltip)
     # target: "sp" = Species attribute, "ss" = SpeciesSettings attribute
+    # Strings in the list are rendered as section headers.
     _SP_SLIDERS = [
-        # Diet tuning
+        "DIET TUNING",
         ("plant_food_multiplier", "Plant Multiplier", 0.1, 3.0, 0.1, ".1f", "sp",
          "Energy multiplier when eating plants. Higher = more energy per plant."),
         ("attack_damage", "Attack Damage", 0.5, 10.0, 0.5, ".1f", "sp",
@@ -836,14 +837,14 @@ class Menu:
          "How close a creature must be to a corpse to scavenge energy from it."),
         ("scavenge_death_energy", "Scavenge Energy", 0, 30, 1, ".0f", "sp",
          "Energy gained when a nearby creature dies within scavenge radius."),
-        # Population
+        "POPULATION",
         ("freeplay_initial_population", "Initial Pop", 1, 100, 1, ".0f", "ss",
          "Number of creatures spawned at the start of a new simulation."),
         ("freeplay_carrying_capacity", "Carry Capacity", 5, 200, 5, ".0f", "ss",
          "Target population. Breeding slows as population approaches this limit."),
         ("freeplay_hard_cap", "Hard Cap", 10, 300, 5, ".0f", "ss",
          "Absolute maximum population. No new births allowed above this number."),
-        # Mutation
+        "EVOLUTION",
         ("mutation_rate", "Mutation Rate", 0.01, 1.0, 0.05, ".2f", "ss",
          "Probability that each neural network weight mutates during reproduction."),
         ("mutation_strength", "Mutation Str.", 0.05, 2.0, 0.05, ".2f", "ss",
@@ -852,7 +853,13 @@ class Menu:
          "Chance of mixing genes from two parents instead of cloning one parent."),
         ("trait_mutation_range", "Trait Mut Range", 0, 20, 1, ".0f", "ss",
          "Max points a genetic trait (size, speed, sense) can shift per generation."),
-        # Breeding
+        ("weight_clamp", "Weight Clamp", 0.0, 10.0, 0.5, ".1f", "ss",
+         "Clamp neural network weights after mutation (0 = no clamping)."),
+        ("top_performers_count", "Top Survivors", 1, 50, 1, ".0f", "ss",
+         "Number of top-fitness creatures used to seed next generation on extinction respawn."),
+        ("min_population", "Min Parents", 0, 50, 1, ".0f", "ss",
+         "Pad parent pool with random DNA if fewer than this survived (0 = off)."),
+        "BREEDING",
         ("freeplay_breed_min_age", "Breed Min Age", 1, 30, 1, ".0f", "ss",
          "Minimum age (in seconds) before a creature is old enough to breed."),
         ("freeplay_breed_min_food", "Breed Min Food", 1, 20, 1, ".0f", "ss",
@@ -865,7 +872,7 @@ class Menu:
          "Energy spent by the parent when producing an offspring."),
         ("freeplay_child_energy", "Child Energy", 10, 200, 10, ".0f", "ss",
          "Starting energy given to a newborn creature."),
-        # Creature
+        "CREATURE",
         ("base_energy", "Start Energy", 20, 500, 10, ".0f", "ss",
          "Energy each creature starts with."),
         ("energy_cost_per_thrust", "Move Cost", 0.01, 0.5, 0.01, ".2f", "ss",
@@ -874,10 +881,9 @@ class Menu:
          "Extra energy cost for turning (0 = free turning)."),
         ("food_heal", "Food Heal (sec)", 0.0, 10.0, 0.5, ".1f", "ss",
          "Lifespan seconds restored per food eaten."),
-        # Night Vision
         ("night_vision_multiplier", "Night Vision", 0.0, 1.0, 0.05, ".2f", "ss",
          "Vision multiplier at night (1.0 = no reduction)."),
-        # Fitness
+        "FITNESS WEIGHTS",
         ("fitness_food_weight", "Food Weight", 0.0, 50.0, 1.0, ".1f", "ss",
          "Food eaten contribution to fitness score."),
         ("fitness_time_weight", "Survival Weight", 0.0, 5.0, 0.05, ".2f", "ss",
@@ -907,8 +913,10 @@ class Menu:
 
     def _species_card_height(self) -> int:
         """Height of a single species card in the editor."""
-        # Header(30) + action row(28) + diet flags(3 rows * 28) + sliders(len * 22) + padding
-        return 30 + 28 + 84 + len(self._SP_SLIDERS) * 22 + 16
+        # Header(30) + action row(28) + diet flags(3 rows * 28) + rows + padding
+        # Section headers use 24px, sliders use 22px
+        row_h = sum(24 if isinstance(item, str) else 22 for item in self._SP_SLIDERS)
+        return 30 + 28 + 84 + row_h + 16
 
     def show_species_editor(self, settings: SimSettings) -> SimSettings:
         """
@@ -1061,13 +1069,18 @@ class Menu:
                         slider_x = card_x + 170
                         slider_w = card_w - 250
                         clicked_slider = False
-                        for si, (attr, label, smin, smax, step, fmt, target, _tip) in enumerate(self._SP_SLIDERS):
-                            sy = slider_base_y + si * 22
+                        sy = slider_base_y
+                        for item in self._SP_SLIDERS:
+                            if isinstance(item, str):
+                                sy += 24
+                                continue
+                            attr, label, smin, smax, step, fmt, target, _tip = item
                             sr = pygame.Rect(slider_x, sy, slider_w, 14)
                             if sr.collidepoint(mx, my):
                                 dragging_slider = (sp.id, attr, target, smin, smax, step)
                                 clicked_slider = True
                                 break
+                            sy += 22
                         if clicked_slider:
                             break
 
@@ -1224,8 +1237,19 @@ class Menu:
                 slider_x = card_x + 170
                 slider_w = card_w - 250
 
-                for si, (attr, label, smin, smax, step, fmt, target, tip) in enumerate(self._SP_SLIDERS):
-                    sy = slider_base_y + si * 22
+                sy = slider_base_y
+                for item in self._SP_SLIDERS:
+                    if isinstance(item, str):
+                        # Section header
+                        hdr_surf = self.font_small.render(item, True, (90, 160, 200))
+                        self.surface.blit(hdr_surf, (card_x + 16, sy + 6))
+                        pygame.draw.line(self.surface, (50, 70, 90),
+                                         (card_x + 16 + hdr_surf.get_width() + 8, sy + 14),
+                                         (card_x + card_w - 20, sy + 14))
+                        sy += 24
+                        continue
+
+                    attr, label, smin, smax, step, fmt, target, tip = item
                     obj = sp if target == "sp" else sp.settings
                     val = getattr(obj, attr)
                     t = max(0, min(1, (val - smin) / (smax - smin))) if smax > smin else 0
@@ -1245,6 +1269,7 @@ class Menu:
                     row_rect = pygame.Rect(card_x + 16, sy, slider_x + slider_w + 60 - card_x - 16, 18)
                     if tip and row_rect.collidepoint(mouse_pos):
                         hovered_tooltip = tip
+                    sy += 22
 
                 y_pos += card_h + 12
 
