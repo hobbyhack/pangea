@@ -328,6 +328,8 @@ class Simulation:
             # Per-species initial populations
             dna_list = []
             for sp in self.settings.species_registry.all():
+                if not sp.enabled:
+                    continue
                 for _ in range(sp.settings.freeplay_initial_population):
                     dna_list.append(DNA.random_for_species(sp.id))
             world = self._create_world(dna_list)
@@ -436,6 +438,8 @@ class Simulation:
                                     self.tools.reset()
                                     dna_list = []
                                     for sp in self.settings.species_registry.all():
+                                        if not sp.enabled:
+                                            continue
                                         for _ in range(sp.settings.freeplay_initial_population):
                                             dna_list.append(DNA.random_for_species(sp.id))
                                     world = self._create_world(dna_list)
@@ -633,6 +637,8 @@ class Simulation:
         # Per-species initial populations
         dna_list = []
         for sp in self.settings.species_registry.all():
+            if not sp.enabled:
+                continue
             for _ in range(sp.settings.freeplay_initial_population):
                 dna_list.append(DNA.random_for_species(sp.id))
         world = self._create_world(dna_list)
@@ -741,6 +747,8 @@ class Simulation:
                                 self.tools.reset()
                                 dna_list = []
                                 for sp in self.settings.species_registry.all():
+                                    if not sp.enabled:
+                                        continue
                                     for _ in range(sp.settings.freeplay_initial_population):
                                         dna_list.append(DNA.random_for_species(sp.id))
                                 world = self._create_world(dna_list)

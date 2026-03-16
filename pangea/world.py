@@ -117,6 +117,9 @@ class World:
         # Day/night cycle timer
         self.day_night_time = 0.0
 
+        # Stashed creatures for disabled species (species_id -> list[Creature])
+        self._stashed_creatures: dict[str, list[Creature]] = {}
+
         # Generate hazard zones
         self.hazards: list[Hazard] = []
         for _ in range(self.settings.hazard_count):
@@ -531,6 +534,30 @@ class World:
             creature.x += push[0]
             creature.y += push[1]
 
+    # ── Species Stash/Unstash ─────────────────────────────────
+
+    def _sync_species_enabled(self) -> None:
+        """Move creatures to/from stash when species enabled state changes."""
+        registry = self.settings.species_registry
+
+        # Stash creatures of newly-disabled species
+        for sp in registry.all():
+            if not sp.enabled and sp.id not in self._stashed_creatures:
+                stashed = [c for c in self.creatures if c.dna.species_id == sp.id and c.alive]
+                if stashed:
+                    self._stashed_creatures[sp.id] = stashed
+                    self.creatures = [c for c in self.creatures if c.dna.species_id != sp.id or not c.alive]
+                else:
+                    # Mark as stashed (empty) so we don't re-check every frame
+                    self._stashed_creatures[sp.id] = []
+
+        # Unstash creatures of re-enabled species
+        stashed_ids = list(self._stashed_creatures.keys())
+        for sid in stashed_ids:
+            sp = registry.get(sid)
+            if sp is not None and sp.enabled:
+                self.creatures.extend(self._stashed_creatures.pop(sid))
+
     # ── Per-Frame Update ─────────────────────────────────────
 
     def update(self, dt: float) -> None:
@@ -543,6 +570,9 @@ class World:
         self.elapsed_time += dt
         self.day_night_time += dt
         self.season_time += dt
+
+        # Stash/unstash creatures when species enabled state changes
+        self._sync_species_enabled()
 
         # Spawn food (CPU — probabilistic, involves list mutations)
         self.spawn_food(dt)

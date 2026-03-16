@@ -1160,7 +1160,7 @@ class Menu:
                 self._draw_toggle(card_x + 16, action_y, sp.enabled)
                 enabled_area = pygame.Rect(card_x + 16, action_y, 130, 20)
                 if enabled_area.collidepoint(mouse_pos):
-                    hovered_tooltip = "Pause this species: no new births and no extinction respawn while disabled."
+                    hovered_tooltip = "Pause this species: creatures are stashed and restored when re-enabled."
 
                 # Dimmed overlay hint when disabled
                 if not sp.enabled:

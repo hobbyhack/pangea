@@ -609,7 +609,7 @@ class Renderer:
         y = 12
 
         alive = world.alive_count()
-        cap = world.settings.freeplay_carrying_capacity
+        cap = world.settings.total_freeplay_carrying_capacity()
         elapsed = world.elapsed_time
         mins = int(elapsed) // 60
         secs = int(elapsed) % 60

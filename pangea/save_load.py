@@ -307,7 +307,8 @@ def save_snapshot(
         "timestamp": timestamp,
         "settings": settings_dict,
         # World state
-        "creatures": [_creature_to_dict(c) for c in world.creatures],
+        "creatures": [_creature_to_dict(c) for c in world.creatures]
+                      + [_creature_to_dict(c) for stash in world._stashed_creatures.values() for c in stash],
         "food": [_food_to_dict(f) for f in world.food],
         "hazards": [_hazard_to_dict(h) for h in world.hazards],
         "biomes": [_biome_to_dict(b) for b in world.biomes],

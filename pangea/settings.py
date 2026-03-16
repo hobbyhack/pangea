@@ -112,8 +112,8 @@ class SimSettings:
     species_registry: SpeciesRegistry = field(default_factory=default_registry)
 
     def total_freeplay_carrying_capacity(self) -> int:
-        """Sum of all per-species carrying capacities (for food overcapacity calc)."""
-        return sum(sp.settings.freeplay_carrying_capacity for sp in self.species_registry)
+        """Sum of enabled per-species carrying capacities (for food overcapacity calc)."""
+        return sum(sp.settings.freeplay_carrying_capacity for sp in self.species_registry if sp.enabled)
 
     def to_dict(self) -> dict:
         """Serialize all settings to a plain dict."""
