@@ -82,6 +82,7 @@ class Simulation:
         self.settings.world_height = config.WINDOW_HEIGHT
         self.tools = PlayerTools()
         self.settings_panel = SettingsPanel()
+        self.use_gpu = True  # Enable Taichi GPU compute (CUDA/Vulkan/Metal/CPU fallback)
         self._active_world: World | None = None
         self._net_host: NetworkHost | None = None
         self._net_client: NetworkClient | None = None
@@ -278,7 +279,7 @@ class Simulation:
         if loaded_snapshot:
             # Resume from full snapshot — restore exact simulation state
             creatures = loaded_snapshot["creatures"]
-            world = World(creatures, settings=self.settings, tools=self.tools)
+            world = World(creatures, settings=self.settings, tools=self.tools, use_gpu=self.use_gpu)
             world.freeplay = True
             world.generation = 0
             # Overwrite auto-generated entities with saved state
@@ -945,7 +946,7 @@ class Simulation:
                     break
                 elif msg.get("t") == MsgType.SNAPSHOT:
                     # Got a snapshot before full_state — create minimal world
-                    world = World([], settings=self.settings, tools=self.tools)
+                    world = World([], settings=self.settings, tools=self.tools, use_gpu=self.use_gpu)
                     self._active_world = world
                     apply_snapshot(world, msg)
                     break
@@ -1180,6 +1181,6 @@ class Simulation:
             y = random.uniform(50, self.settings.world_height - 50)
             sp = registry.get(dna.species_id)
             creatures.append(Creature(dna, x, y, species=sp))
-        world = World(creatures, settings=self.settings, tools=self.tools)
+        world = World(creatures, settings=self.settings, tools=self.tools, use_gpu=self.use_gpu)
         self._active_world = world
         return world

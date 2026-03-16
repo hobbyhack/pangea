@@ -94,10 +94,13 @@ class World:
         height: float | None = None,
         settings: SimSettings | None = None,
         tools: PlayerTools | None = None,
+        use_gpu: bool = False,
     ) -> None:
         self.settings = settings or SimSettings()
         self.width = width if width is not None else self.settings.world_width
         self.height = height if height is not None else self.settings.world_height
+        self.use_gpu = use_gpu
+        self._compute = None
         self.creatures = creatures
         self.food: list[Food] = []
         self.elapsed_time = 0.0
@@ -129,6 +132,19 @@ class World:
         initial = self.settings.initial_food_count
         for _ in range(initial):
             self.food.append(self._random_food())
+
+        # GPU compute engine (lazy init)
+        if self.use_gpu:
+            self._init_gpu()
+
+    def _init_gpu(self) -> None:
+        """Initialize GPU compute engine and upload initial state."""
+        from pangea.compute import ComputeEngine
+
+        self._compute = ComputeEngine(use_gpu=True)
+        self._compute.upload_species(self.settings.species_registry)
+        self._compute.upload_environment(self.biomes, self.hazards)
+        self._compute.upload_creatures(self.creatures)
 
     # ── Dynamic Resize ─────────────────────────────────────────
 
@@ -527,10 +543,82 @@ class World:
         self.elapsed_time += dt
         self.day_night_time += dt
         self.season_time += dt
-        wrap = self.settings.world_wrap
 
-        # Spawn food
+        # Spawn food (CPU — probabilistic, involves list mutations)
         self.spawn_food(dt)
+
+        # Update player tools (age zones/barriers)
+        if self.tools:
+            self.tools.update(dt)
+
+        if self.use_gpu and self._compute is not None:
+            self._gpu_update(dt)
+        else:
+            self._cpu_update(dt)
+
+    def _gpu_update(self, dt: float) -> None:
+        """GPU-accelerated update path."""
+        compute = self._compute
+
+        # Upload food (including any just-spawned by CPU)
+        compute.upload_food(self.food)
+
+        # Run all GPU kernels for this frame
+        compute.run_frame(
+            dt=dt,
+            world_w=self.width,
+            world_h=self.height,
+            wrap=self.settings.world_wrap,
+            daylight=self.daylight_factor,
+        )
+
+        # Download creature state
+        compute.download_creatures(self.creatures)
+
+        # CPU post-passes
+
+        # Territory tracking
+        if TERRITORY_GRID_SIZE > 0:
+            for creature in self.creatures:
+                if creature.alive:
+                    cell = (
+                        int(creature.x // TERRITORY_GRID_SIZE),
+                        int(creature.y // TERRITORY_GRID_SIZE),
+                    )
+                    creature.territory_cells.add(cell)
+
+        # Tool effects (zones, barriers — small lists, stays CPU)
+        for creature in self.creatures:
+            if creature.alive:
+                self.apply_tool_effects(creature, dt)
+
+        # Process deaths and reward scavengers (CPU — involves food list mutation)
+        frame_dead = [
+            c for c in self.creatures
+            if not c.alive and not c.death_processed
+        ]
+        self._reward_scavengers(frame_dead)
+        for c in frame_dead:
+            c.death_processed = True
+
+        # Compact food list (remove eaten/expired on GPU)
+        self.food = compute.download_food_compacted(self.food)
+
+        # Bonus food spawning in forest biomes
+        for biome in self.biomes:
+            food_mult = BIOME_FOOD_MULTIPLIER.get(biome.biome_type, 0.0)
+            if food_mult > 1.0 and random.random() < 0.02 * (food_mult - 1.0):
+                angle = random.uniform(0, 2 * math.pi)
+                dist = random.uniform(0, biome.radius * 0.8)
+                fx = biome.x + math.cos(angle) * dist
+                fy = biome.y + math.sin(angle) * dist
+                fx = max(FOOD_RADIUS, min(self.width - FOOD_RADIUS, fx))
+                fy = max(FOOD_RADIUS, min(self.height - FOOD_RADIUS, fy))
+                self.food.append(self._make_food(fx, fy))
+
+    def _cpu_update(self, dt: float) -> None:
+        """Original CPU update path (fallback)."""
+        wrap = self.settings.world_wrap
 
         # Age food and remove expired items (only rebuild list when needed)
         has_expiry = False
@@ -540,10 +628,6 @@ class World:
                 has_expiry = True
         if has_expiry:
             self.food = [f for f in self.food if f.lifetime <= 0 or f.age < f.lifetime]
-
-        # Update player tools (age zones/barriers)
-        if self.tools:
-            self.tools.update(dt)
 
         # Daylight factor for day/night vision
         daylight = self.daylight_factor
@@ -728,6 +812,11 @@ class World:
 
         self.creatures.extend(new_children)
         self.total_births += len(new_children)
+
+        # Re-upload to GPU after population change
+        if new_children and self.use_gpu and self._compute is not None:
+            self._compute.upload_creatures(self.creatures)
+
         return new_children
 
     def remove_dead_creatures(self, min_dead_age: float = 3.0) -> None:
@@ -750,6 +839,10 @@ class World:
                 kept.append(c)
         self.total_deaths += removed
         self.creatures = kept
+
+        # Re-upload to GPU after population change
+        if removed > 0 and self.use_gpu and self._compute is not None:
+            self._compute.upload_creatures(self.creatures)
 
     def alive_count(self) -> int:
         """Return the number of living creatures."""

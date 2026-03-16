@@ -179,6 +179,13 @@ COLOR_HERBIVORE = (80, 200, 80)     # Green tint for herbivores
 COLOR_CARNIVORE = (200, 60, 60)     # Red tint for carnivores
 COLOR_SCAVENGER = (180, 140, 50)    # Yellow/brown tint for scavengers
 
+# ── GPU / Taichi Compute ─────────────────────────────────────
+GPU_MAX_CREATURES = 512      # Max creatures in GPU fields (power of 2)
+GPU_MAX_FOOD = 2048           # Max food items in GPU fields
+GPU_MAX_SPECIES = 16          # Max species in lookup table
+GPU_MAX_BIOMES = 16           # Max biome regions
+GPU_MAX_HAZARDS = 16          # Max hazard zones
+
 # ── Network / Multiplayer ─────────────────────────────────────
 NET_SNAPSHOT_INTERVAL = 6           # Frames between snapshot broadcasts (60fps/6 = 10/sec)
 NET_DEFAULT_RELAY = "ws://localhost:8765"
