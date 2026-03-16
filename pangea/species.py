@@ -71,6 +71,9 @@ class SpeciesSettings:
     # ── Extinction ────────────────────────────────────────────
     extinction_mode: str = EXTINCTION_RESPAWN_BEST
 
+    # ── DNA Stash ─────────────────────────────────────────────
+    auto_stash_dna: bool = False  # auto-save top DNA on extinction respawn
+
     def to_dict(self) -> dict:
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
@@ -121,6 +124,9 @@ class Species:
     # ── Active state ─────────────────────────────────────────
     enabled: bool = True  # False = paused (no breeding, no extinction respawn)
 
+    # ── DNA stash (optional evolved DNA, stored as raw dicts) ─
+    dna_stash: list[dict] | None = field(default=None, repr=False)
+
     @property
     def can_attack(self) -> bool:
         """True if this species can attack any creature."""
@@ -136,9 +142,14 @@ class Species:
         """True if this species benefits from nearby deaths."""
         return self.can_eat_corpses and self.scavenge_death_energy > 0
 
+    @property
+    def has_dna_stash(self) -> bool:
+        """True if this species has stashed evolved DNA."""
+        return bool(self.dna_stash)
+
     def to_dict(self) -> dict:
         """Serialize species definition to a JSON-compatible dict."""
-        return {
+        d = {
             "id": self.id,
             "name": self.name,
             "color": list(self.color),
@@ -155,11 +166,15 @@ class Species:
             "settings": self.settings.to_dict(),
             "enabled": self.enabled,
         }
+        if self.dna_stash is not None:
+            d["dna_stash"] = self.dna_stash
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> Species:
         """Reconstruct a Species from a saved dict."""
         settings_data = data.get("settings", {})
+        dna_stash = data.get("dna_stash")
         return cls(
             id=data["id"],
             name=data["name"],
@@ -176,6 +191,7 @@ class Species:
             scavenge_death_energy=data.get("scavenge_death_energy", config.SCAVENGER_DEATH_ENERGY),
             settings=SpeciesSettings.from_dict(settings_data) if settings_data else SpeciesSettings(),
             enabled=data.get("enabled", True),
+            dna_stash=dna_stash if isinstance(dna_stash, list) else None,
         )
 
     def copy(self) -> Species:

@@ -914,12 +914,26 @@ class Renderer:
         ]
         max_pts = EVOLUTION_POINTS * 0.6
 
+        # Hover tooltip definitions for stat labels
+        # Each entry: (label_text, hitbox_rect, tooltip_text)
+        hover_items: list[tuple[str, pygame.Rect, str]] = []
+        mx, my = pygame.mouse.get_pos()
+
+        # Get latest snapshot stats
+        latest_snapshot = history[-1] if history else None
+
         for sp_id, name, color, ss in species_info:
             creatures = by_species.get(sp_id, [])
             n = len(creatures)
 
+            # Get per-species stats from snapshot
+            sp_stats = (
+                latest_snapshot.get(f"{sp_id}_stats", {})
+                if latest_snapshot else {}
+            )
+
             # Card background
-            card_h = 72
+            card_h = 130
             card_bg = pygame.Surface((panel_w - 24, card_h), pygame.SRCALPHA)
             card_bg.fill((20, 22, 35, 180))
             self.surface.blit(card_bg, (panel_x + 12, y))
@@ -933,6 +947,10 @@ class Renderer:
                 f"{name}  {n}/{ss.freeplay_hard_cap}", True, color,
             )
             self.surface.blit(header, (panel_x + 20, y + 3))
+            hover_items.append((
+                "Pop", pygame.Rect(panel_x + 20, y + 3, header.get_width(), 16),
+                "Alive count / hard population cap",
+            ))
 
             if n > 0:
                 avg_gen = sum(c.generation for c in creatures) / n
@@ -941,23 +959,107 @@ class Renderer:
                 avg_age = sum(c.age for c in creatures) / n
                 avg_offspring = sum(c.offspring_count for c in creatures) / n
 
-                # Stats row 1: Gen, Food, Energy
-                row1 = (
-                    f"Gen:{avg_gen:.1f}  Food:{avg_food:.1f}"
-                    f"  Energy:{avg_energy:.0f}  Age:{avg_age:.0f}s"
+                # Brain utilization: % of weights with |w| > 0.1
+                import numpy as np
+                total_weights = 0
+                active_weights = 0
+                for c in creatures:
+                    for w in c.dna.weights:
+                        flat = np.abs(w).ravel()
+                        total_weights += len(flat)
+                        active_weights += int(np.sum(flat > 0.1))
+                brain_pct = (active_weights / total_weights * 100) if total_weights else 0
+
+                # Stats row 1: Gen, Food, Energy, Age
+                lx = panel_x + 20
+                row1_parts = [
+                    (f"Gen:{avg_gen:.1f}", "Avg evolutionary generation"),
+                    (f"  Food:{avg_food:.1f}", "Avg food items eaten per creature"),
+                    (f"  Energy:{avg_energy:.0f}", "Avg current energy level"),
+                    (f"  Age:{avg_age:.0f}s", "Avg age in seconds"),
+                ]
+                rx = lx
+                for text, tip in row1_parts:
+                    txt = self.font_small.render(text, True, (160, 170, 190))
+                    self.surface.blit(txt, (rx, y + 21))
+                    hover_items.append((
+                        text, pygame.Rect(rx, y + 21, txt.get_width(), 13), tip,
+                    ))
+                    rx += txt.get_width()
+
+                # Stats row 2: Extinction metrics
+                ext_count = sp_stats.get("extinction_count", 0)
+                time_since = sp_stats.get("time_since_extinction", 0)
+                if ext_count > 0:
+                    mins = int(time_since) // 60
+                    secs = int(time_since) % 60
+                    row2 = f"Extinctions:{ext_count}  Last:{mins}:{secs:02d} ago"
+                else:
+                    row2 = "No extinctions"
+                txt2 = self.font_small.render(row2, True, (140, 220, 180))
+                self.surface.blit(txt2, (panel_x + 20, y + 37))
+                hover_items.append((
+                    "Ext", pygame.Rect(panel_x + 20, y + 37, txt2.get_width(), 13),
+                    "Times this species went to 0 alive and was respawned",
+                ))
+
+                # Stats row 3: Offspring + Brain %
+                row3 = f"Offspring:{avg_offspring:.1f}"
+                txt3 = self.font_small.render(row3, True, (140, 150, 170))
+                self.surface.blit(txt3, (panel_x + 20, y + 53))
+                hover_items.append((
+                    "Offspring", pygame.Rect(panel_x + 20, y + 53, txt3.get_width(), 13),
+                    "Avg children produced per creature",
+                ))
+
+                brain_txt = self.font_small.render(
+                    f"Brain:{brain_pct:.0f}%", True, (180, 160, 255),
                 )
-                txt = self.font_small.render(row1, True, (160, 170, 190))
-                self.surface.blit(txt, (panel_x + 20, y + 21))
+                brain_x = panel_x + 20 + txt3.get_width() + 12
+                self.surface.blit(brain_txt, (brain_x, y + 53))
+                hover_items.append((
+                    "Brain", pygame.Rect(brain_x, y + 53, brain_txt.get_width(), 13),
+                    "% of neural network weights actively used (|w| > 0.1)",
+                ))
 
-                # Stats row 2: Offspring
-                row2 = f"Offspring:{avg_offspring:.1f}"
-                txt2 = self.font_small.render(row2, True, (140, 150, 170))
-                self.surface.blit(txt2, (panel_x + 20, y + 35))
+                # Stats row 4: MinPop, 1st Food, DeathE
+                min_pop = sp_stats.get("min_pop", 0)
+                avg_first = sp_stats.get("avg_first_food_time", -1)
+                avg_death_e = sp_stats.get("avg_energy_at_death", -1)
+                row4_parts = [
+                    (f"MinPop:{min_pop}",
+                     "Lowest population count since last extinction"),
+                    (f"  1stFood:{avg_first:.1f}s" if avg_first >= 0 else "  1stFood:--",
+                     "Avg seconds until a newborn eats its first food \u2014 measures NN foraging competence"),
+                    (f"  DeathE:{avg_death_e:.0f}" if avg_death_e >= 0 else "  DeathE:--",
+                     "Avg energy when creatures die \u2014 0 means starvation, higher means dying of old age or predation"),
+                ]
+                rx4 = panel_x + 20
+                for text, tip in row4_parts:
+                    txt4 = self.font_small.render(text, True, (160, 170, 190))
+                    self.surface.blit(txt4, (rx4, y + 69))
+                    hover_items.append((
+                        text, pygame.Rect(rx4, y + 69, txt4.get_width(), 13), tip,
+                    ))
+                    rx4 += txt4.get_width()
 
-                # Mini trait bars (compact, inline)
+                # Stats row 5: Genetic Diversity
+                diversity = sp_stats.get("genetic_diversity", 0)
+                div_txt = self.font_small.render(
+                    f"Diversity:{diversity:.3f}", True, (160, 170, 190),
+                )
+                self.surface.blit(div_txt, (panel_x + 20, y + 85))
+                hover_items.append((
+                    "Diversity",
+                    pygame.Rect(panel_x + 20, y + 85, div_txt.get_width(), 13),
+                    "NN weight variance across population \u2014 too low means inbreeding, too high means no convergence",
+                ))
+
+                # Trait bars (bigger)
                 bar_x = panel_x + 20
-                bar_y_start = y + 52
+                bar_y_start = y + 98
                 bar_w = (panel_w - 44) // 5 - 2
+                bar_h = 10
                 trait_vals = [
                     sum(c.dna.speed for c in creatures) / n,
                     sum(c.dna.size for c in creatures) / n,
@@ -965,219 +1067,86 @@ class Renderer:
                     sum(c.dna.efficiency for c in creatures) / n,
                     sum(c.dna.lifespan for c in creatures) / n,
                 ]
-                trait_labels = ["S", "Z", "V", "E", "L"]
-                for i, (val, tc, tl) in enumerate(zip(trait_vals, trait_colors, trait_labels)):
+                trait_labels = ["Spd", "Siz", "Vis", "Eff", "Lif"]
+                trait_tips = [
+                    "Speed - movement rate (from 100pt genetic budget)",
+                    "Size - body radius, affects collision (from 100pt genetic budget)",
+                    "Vision - sensor range for detecting food/threats (from 100pt genetic budget)",
+                    "Efficiency - energy consumption rate (from 100pt genetic budget)",
+                    "Lifespan - max age before natural death (from 100pt genetic budget)",
+                ]
+                for i, (val, tc, tl, tip) in enumerate(
+                    zip(trait_vals, trait_colors, trait_labels, trait_tips)
+                ):
                     bx = bar_x + i * (bar_w + 2)
                     # Label
                     lb = self.font_small.render(tl, True, tc)
                     self.surface.blit(lb, (bx, bar_y_start - 1))
                     # Bar bg
-                    bbx = bx + 10
+                    bbx = bx + lb.get_width() + 3
+                    actual_bar_w = bar_w - lb.get_width() - 3
                     pygame.draw.rect(
                         self.surface, (30, 32, 45),
-                        (bbx, bar_y_start + 2, bar_w - 12, 7), border_radius=2,
+                        (bbx, bar_y_start + 2, actual_bar_w, bar_h),
+                        border_radius=2,
                     )
-                    fill_w = max(1, int((bar_w - 12) * min(val / max_pts, 1.0)))
+                    fill_w = max(1, int(actual_bar_w * min(val / max_pts, 1.0)))
                     pygame.draw.rect(
                         self.surface, tc,
-                        (bbx, bar_y_start + 2, fill_w, 7), border_radius=2,
+                        (bbx, bar_y_start + 2, fill_w, bar_h),
+                        border_radius=2,
                     )
+                    # Value label inside/beside bar
+                    val_lbl = self.font_small.render(f"{val:.0f}", True, (200, 210, 220))
+                    self.surface.blit(val_lbl, (bbx + 2, bar_y_start + 1))
+                    hover_items.append((
+                        tl, pygame.Rect(bx, bar_y_start - 1, bar_w, bar_h + 4), tip,
+                    ))
+
+                # Budget allocation bar (how 100 pts are distributed)
+                budget_y = bar_y_start + bar_h + 8
+                budget_total = sum(trait_vals)
+                if budget_total > 0:
+                    bx = panel_x + 20
+                    budget_bar_w = panel_w - 44
+                    for i, (val, tc) in enumerate(zip(trait_vals, trait_colors)):
+                        seg_w = max(1, int(budget_bar_w * val / budget_total))
+                        pygame.draw.rect(
+                            self.surface, tc,
+                            (bx, budget_y, seg_w, 6), border_radius=1,
+                        )
+                        bx += seg_w
+                    hover_items.append((
+                        "Budget",
+                        pygame.Rect(panel_x + 20, budget_y, budget_bar_w, 6),
+                        "Genetic budget distribution - 100 pts split across all traits",
+                    ))
+
             else:
+                ext_count = sp_stats.get("extinction_count", 0)
+                ext_text = f"EXTINCT  ({ext_count} total)" if ext_count else "EXTINCT"
                 extinct_lbl = self.font_small.render(
-                    "EXTINCT", True, (120, 60, 60),
+                    ext_text, True, (120, 60, 60),
                 )
                 self.surface.blit(extinct_lbl, (panel_x + 20, y + 28))
 
             y += card_h + 6
 
-        # ── Avg Generation Graph (per-diet) ──
-        if len(history) >= 2:
-            graph_x = panel_x + 12
-            graph_w = panel_w - 24
-            graph_h = 70
-
-            graph_label = self.font.render("Avg Generation", True, (180, 200, 230))
-            self.surface.blit(graph_label, (graph_x, y))
-            y += 20
-
-            pygame.draw.rect(
-                self.surface, (20, 22, 35),
-                (graph_x, y, graph_w, graph_h), border_radius=4,
-            )
-            pygame.draw.rect(
-                self.surface, (40, 45, 60),
-                (graph_x, y, graph_w, graph_h), 1, border_radius=4,
-            )
-
-            n_pts = len(history)
-            x_step = graph_w / max(n_pts - 1, 1)
-
-            # Collect all per-species avg_gen values
-            species_gen_keys = [
-                (f"{sp.id}_stats", sp.color)
-                for sp in registry.all()
-            ]
-            # Also draw overall avg_gen
-            all_gen_vals = [h.get("avg_gen", 0) for h in history]
-            y_max_gen = max(max(all_gen_vals), 1) * 1.1
-
-            # Check per-species stats exist
-            has_species_stats = any(f"{sp.id}_stats" in history[-1] for sp in registry.all())
-            if has_species_stats:
-                for stats_key, _ in species_gen_keys:
-                    vals = [h.get(stats_key, {}).get("avg_gen", 0) for h in history]
-                    y_max_gen = max(y_max_gen, max(vals) * 1.1 if vals else 1)
-
-            # Gridlines
-            for i in range(1, 3):
-                gy = y + int(graph_h * i / 3)
-                pygame.draw.line(
-                    self.surface, (30, 35, 50),
-                    (graph_x, gy), (graph_x + graph_w, gy),
-                )
-
-            # Overall avg gen line
-            overall_pts = []
-            for i, h in enumerate(history):
-                px = graph_x + int(i * x_step)
-                py = y + graph_h - int(h.get("avg_gen", 0) / y_max_gen * graph_h)
-                py = max(y, min(y + graph_h, py))
-                overall_pts.append((px, py))
-            if len(overall_pts) >= 2:
-                pygame.draw.lines(
-                    self.surface, (100, 120, 160), False, overall_pts, 1,
-                )
-
-            # Per-species avg gen lines
-            if has_species_stats:
-                for stats_key, color in species_gen_keys:
-                    pts = []
-                    for i, h in enumerate(history):
-                        val = h.get(stats_key, {}).get("avg_gen", 0)
-                        px = graph_x + int(i * x_step)
-                        py = y + graph_h - int(val / y_max_gen * graph_h)
-                        py = max(y, min(y + graph_h, py))
-                        pts.append((px, py))
-                    if len(pts) >= 2:
-                        pygame.draw.lines(self.surface, color, False, pts, 2)
-
-            # Y-axis max
-            max_lbl = self.font_small.render(f"G{int(y_max_gen)}", True, (90, 95, 110))
-            self.surface.blit(max_lbl, (graph_x, y - 2))
-
-            y += graph_h + 6
-
-            # ── Population History Graph ──
-            pop_graph_h = 70
-            pop_label = self.font.render("Population", True, (180, 200, 230))
-            self.surface.blit(pop_label, (graph_x, y))
-            y += 20
-
-            pygame.draw.rect(
-                self.surface, (20, 22, 35),
-                (graph_x, y, graph_w, pop_graph_h), border_radius=4,
-            )
-            pygame.draw.rect(
-                self.surface, (40, 45, 60),
-                (graph_x, y, graph_w, pop_graph_h), 1, border_radius=4,
-            )
-
-            for i in range(1, 3):
-                gy = y + int(pop_graph_h * i / 3)
-                pygame.draw.line(
-                    self.surface, (30, 35, 50),
-                    (graph_x, gy), (graph_x + graph_w, gy),
-                )
-
-            pop_vals = [h["population"] for h in history]
-            y_max_pop = max(max(pop_vals), 1) * 1.1
-
-            # Total population line
-            pop_points = []
-            for i, h in enumerate(history):
-                px = graph_x + int(i * x_step)
-                py = y + pop_graph_h - int(h["population"] / y_max_pop * pop_graph_h)
-                py = max(y, min(y + pop_graph_h, py))
-                pop_points.append((px, py))
-            if len(pop_points) >= 2:
-                pygame.draw.lines(self.surface, (100, 220, 255), False, pop_points, 1)
-
-            # Per-species population lines
-            species_pop_keys = [
-                (sp.id, sp.color)
-                for sp in registry.all()
-            ]
-            for key, color in species_pop_keys:
-                pts = []
-                for i, h in enumerate(history):
-                    px = graph_x + int(i * x_step)
-                    py = y + pop_graph_h - int(h[key] / y_max_pop * pop_graph_h)
-                    py = max(y, min(y + pop_graph_h, py))
-                    pts.append((px, py))
-                if len(pts) >= 2:
-                    pygame.draw.lines(self.surface, color, False, pts, 2)
-
-            # Y-axis max
-            max_lbl = self.font_small.render(f"{int(y_max_pop)}", True, (90, 95, 110))
-            self.surface.blit(max_lbl, (graph_x, y - 2))
-
-            y += pop_graph_h + 6
-
-            # ── Birth/Death Rate Graph ──
-            rate_h = 60
-            rate_label = self.font.render("Birth / Death Rate", True, (180, 200, 230))
-            self.surface.blit(rate_label, (graph_x, y))
-            y += 20
-
-            pygame.draw.rect(
-                self.surface, (20, 22, 35),
-                (graph_x, y, graph_w, rate_h), border_radius=4,
-            )
-            pygame.draw.rect(
-                self.surface, (40, 45, 60),
-                (graph_x, y, graph_w, rate_h), 1, border_radius=4,
-            )
-
-            birth_vals = [h["births_per_min"] for h in history]
-            death_vals = [h["deaths_per_min"] for h in history]
-            y_max_rate = max(max(birth_vals), max(death_vals), 1) * 1.1
-
-            birth_points = []
-            death_points = []
-            for i, h in enumerate(history):
-                px = graph_x + int(i * x_step)
-                by = y + rate_h - int(h["births_per_min"] / y_max_rate * rate_h)
-                by = max(y, min(y + rate_h, by))
-                birth_points.append((px, by))
-                dy = y + rate_h - int(h["deaths_per_min"] / y_max_rate * rate_h)
-                dy = max(y, min(y + rate_h, dy))
-                death_points.append((px, dy))
-            if len(birth_points) >= 2:
-                pygame.draw.lines(self.surface, (80, 255, 120), False, birth_points, 2)
-            if len(death_points) >= 2:
-                pygame.draw.lines(self.surface, (255, 90, 90), False, death_points, 2)
-
-            # Rate legend (compact)
-            y += rate_h + 4
-            pygame.draw.rect(self.surface, (80, 255, 120), (graph_x, y + 2, 8, 8))
-            lbl = self.font_small.render("Birth", True, (140, 150, 170))
-            self.surface.blit(lbl, (graph_x + 12, y))
-            pygame.draw.rect(self.surface, (255, 90, 90), (graph_x + 55, y + 2, 8, 8))
-            lbl = self.font_small.render("Death", True, (140, 150, 170))
-            self.surface.blit(lbl, (graph_x + 67, y))
-
-            # Time range
-            t_start = history[0]["time"]
-            t_end = history[-1]["time"]
-            time_range = self.font_small.render(
-                f"{int(t_start) // 60}:{int(t_start) % 60:02d}"
-                f" - {int(t_end) // 60}:{int(t_end) % 60:02d}",
-                True, (90, 95, 110),
-            )
-            self.surface.blit(
-                time_range,
-                (graph_x + graph_w - time_range.get_width(), y),
-            )
+        # ── Hover Tooltip ──
+        for _, rect, tip in hover_items:
+            if rect.collidepoint(mx, my):
+                tip_surf = self.font_small.render(tip, True, (230, 235, 245))
+                tip_w = tip_surf.get_width() + 10
+                tip_h = tip_surf.get_height() + 6
+                # Position tooltip to left of panel to avoid clipping
+                tx = min(mx + 12, panel_x - tip_w - 4)
+                ty = my - 8
+                bg = pygame.Surface((tip_w, tip_h), pygame.SRCALPHA)
+                bg.fill((15, 18, 30, 230))
+                pygame.draw.rect(bg, (80, 90, 120), (0, 0, tip_w, tip_h), 1, border_radius=3)
+                self.surface.blit(bg, (tx, ty))
+                self.surface.blit(tip_surf, (tx + 5, ty + 3))
+                break  # only show one tooltip at a time
 
     # ── Creature Inspection ──────────────────────────────────
 

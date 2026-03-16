@@ -70,6 +70,8 @@ class Creature:
         self.breed_cooldown: float = 0.0   # seconds until next breed allowed
         self.offspring_count: int = 0       # total children produced
         self.generation: int = 0            # 0 = founding population
+        self.time_to_first_food: float = -1.0  # seconds until first food eaten
+        self.energy_at_death: float = -1.0     # energy when creature died
 
         # Build brain from DNA weights
         self.brain = NeuralNetwork()
@@ -334,16 +336,20 @@ class Creature:
         # Check death — energy depletion
         if self.energy <= 0:
             self.energy = 0
+            self.energy_at_death = self.energy
             self.alive = False
 
         # Check death — lifespan exceeded
         if self.alive and self.age >= self.dna.effective_lifespan:
+            self.energy_at_death = self.energy
             self.alive = False
 
     # ── Eating ───────────────────────────────────────────────
 
     def eat(self, food_energy: float, lifespan_heal: float = 0.0) -> None:
         """Gain energy from eating food, scaled by species plant_food_multiplier."""
+        if self.time_to_first_food < 0:
+            self.time_to_first_food = self.age
         if self.species is not None:
             food_energy *= self.species.plant_food_multiplier
 

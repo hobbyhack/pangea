@@ -82,6 +82,42 @@ def list_species_files(directory: str = "species") -> list[str]:
     return sorted(str(f) for f in path.glob("*.json"))
 
 
+# ── DNA Stash Helpers ────────────────────────────────────────
+
+
+def stash_species_dna(
+    species,
+    creatures: list,
+    settings=None,
+) -> int:
+    """
+    Select top performers and store their DNA on the species.
+
+    Args:
+        species:   Species object to stash DNA on.
+        creatures: All creatures (alive or dead) to evaluate.
+        settings:  Optional SimSettings for fitness weights.
+
+    Returns:
+        Number of DNA entries stashed.
+    """
+    from pangea.evolution import select_top
+
+    species_creatures = [c for c in creatures if c.dna.species_id == species.id]
+    if not species_creatures:
+        return 0
+
+    n = species.settings.top_performers_count
+    top_dna = select_top(species_creatures, n=n, settings=settings)
+    species.dna_stash = [dna.to_dict() for dna in top_dna]
+    return len(species.dna_stash)
+
+
+def clear_species_dna_stash(species) -> None:
+    """Remove stashed DNA from a species."""
+    species.dna_stash = None
+
+
 # ── Full Game Saves ──────────────────────────────────────────
 
 SAVES_DIR = "saves"
@@ -209,6 +245,8 @@ def _creature_to_dict(creature) -> dict:
         "breed_cooldown": creature.breed_cooldown,
         "offspring_count": creature.offspring_count,
         "generation": creature.generation,
+        "time_to_first_food": creature.time_to_first_food,
+        "energy_at_death": creature.energy_at_death,
     }
 
 
@@ -231,6 +269,8 @@ def _creature_from_dict(data: dict):
     creature.breed_cooldown = data.get("breed_cooldown", 0.0)
     creature.offspring_count = data.get("offspring_count", 0)
     creature.generation = data.get("generation", 0)
+    creature.time_to_first_food = data.get("time_to_first_food", -1.0)
+    creature.energy_at_death = data.get("energy_at_death", -1.0)
     return creature
 
 
@@ -425,11 +465,18 @@ def upload_species(filepath: str, server_url: str) -> dict:
     with open(filepath, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    payload = json.dumps({
+    upload_data: dict = {
         "species_name": data.get("species_name", ""),
         "generation": data.get("generation", 0),
         "creatures": data.get("creatures", []),
-    }).encode("utf-8")
+    }
+    # Include species config if the file was saved as a species settings file
+    # (has "id" key from Species.to_dict())
+    if "id" in data:
+        # Strip dna_stash from config to avoid duplication (creatures IS the DNA)
+        config = {k: v for k, v in data.items() if k not in ("dna_stash", "creatures")}
+        upload_data["species_config"] = config
+    payload = json.dumps(upload_data).encode("utf-8")
 
     url = f"{server_url.rstrip('/')}/species"
     req = urllib.request.Request(
@@ -469,11 +516,17 @@ def download_species(
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
     filepath = os.path.join(save_dir, f"{safe_name}_{species_id}.json")
 
-    save_data = {
-        "species_name": data.get("species_name", name),
-        "generation": data.get("generation", 0),
-        "creatures": data.get("creatures", []),
-    }
+    # If server returned a species config, save as a full species settings file
+    species_config = data.get("species_config")
+    if species_config:
+        save_data = dict(species_config)
+        save_data["dna_stash"] = data.get("creatures", [])
+    else:
+        save_data = {
+            "species_name": data.get("species_name", name),
+            "generation": data.get("generation", 0),
+            "creatures": data.get("creatures", []),
+        }
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(save_data, f, indent=2)
 

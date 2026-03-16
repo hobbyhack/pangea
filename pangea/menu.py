@@ -74,6 +74,7 @@ class Menu:
         on_toggle_fullscreen: object = None,
         on_toggle_maximized: object = None,
         on_resize: object = None,
+        on_stash_dna: object = None,
     ) -> None:
         self.surface = surface
         self.font = pygame.font.SysFont("consolas", 20)
@@ -84,6 +85,7 @@ class Menu:
         self._on_toggle_fullscreen = on_toggle_fullscreen
         self._on_toggle_maximized = on_toggle_maximized
         self._on_resize = on_resize
+        self._on_stash_dna = on_stash_dna
 
     def _handle_window_event(self, event: pygame.event.Event) -> bool:
         """Check for F10/F11/VIDEORESIZE and invoke callbacks. Returns True if handled."""
@@ -1030,6 +1032,16 @@ class Menu:
                             self._load_species_settings(sp)
                             break
 
+                        # Stash / Clear DNA button
+                        stash_rect = pygame.Rect(card_x + card_w - 80, y_pos + 30, 70, 22)
+                        if stash_rect.collidepoint(mx, my):
+                            if sp.has_dna_stash:
+                                from pangea.save_load import clear_species_dna_stash
+                                clear_species_dna_stash(sp)
+                            elif self._on_stash_dna:
+                                self._on_stash_dna(sp.id)
+                            break
+
                         # Diet flag toggles
                         toggle_y = y_pos + 58
                         toggle_x_l = card_x + 20
@@ -1196,6 +1208,25 @@ class Menu:
                                   self.font_small.render("Load", True, (160, 175, 210)).get_rect(center=load_sp_rect.center))
                 if lh:
                     hovered_tooltip = "Load species settings from a file."
+
+                # Stash / Clear DNA buttons
+                stash_rect = pygame.Rect(card_x + card_w - 80, action_y, 70, 22)
+                stash_hover = stash_rect.collidepoint(mouse_pos)
+                if sp.has_dna_stash:
+                    # Show "Clear" button when stash exists
+                    pygame.draw.rect(self.surface, (65, 40, 40) if stash_hover else (50, 30, 30), stash_rect, border_radius=4)
+                    stash_label = self.font_small.render("Clear DNA", True, (210, 150, 150))
+                    self.surface.blit(stash_label, stash_label.get_rect(center=stash_rect.center))
+                    if stash_hover:
+                        n = len(sp.dna_stash) if sp.dna_stash else 0
+                        hovered_tooltip = f"Clear stashed DNA ({n} entries). Next start will use random DNA."
+                else:
+                    # Show "Stash" button
+                    pygame.draw.rect(self.surface, (50, 50, 65) if stash_hover else (38, 38, 50), stash_rect, border_radius=4)
+                    stash_label = self.font_small.render("Stash DNA", True, (170, 170, 210))
+                    self.surface.blit(stash_label, stash_label.get_rect(center=stash_rect.center))
+                    if stash_hover:
+                        hovered_tooltip = "Save top performers' DNA on this species for future runs."
 
                 # Diet flag toggles
                 toggle_y = y_pos + 58
@@ -1432,8 +1463,8 @@ class Menu:
         for dna in dna_list:
             dna.species_id = uid
 
-        # Store imported DNA on the species for the simulation to spawn
-        new_sp._imported_dna = dna_list
+        # Store imported DNA on the species as stash for the simulation to spawn
+        new_sp.dna_stash = [dna.to_dict() for dna in dna_list]
 
         return settings, uid
 

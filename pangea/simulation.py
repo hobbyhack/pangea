@@ -68,7 +68,7 @@ class Simulation:
         self.screen = pygame.display.set_mode((config.WINDOW_WIDTH, config.WINDOW_HEIGHT), pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
         self.renderer = Renderer(self.screen)
-        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen, on_toggle_maximized=self._toggle_maximized, on_resize=self._handle_resize)
+        self.menu = Menu(self.screen, on_toggle_fullscreen=self._toggle_fullscreen, on_toggle_maximized=self._toggle_maximized, on_resize=self._handle_resize, on_stash_dna=self._stash_dna)
 
         self.running = True
         self.paused = False
@@ -309,6 +309,9 @@ class Simulation:
             self._freeplay_history = fp.get("history", [])
             self._freeplay_history_timer = 0.0
             self._freeplay_stats_timer = 0.0
+            self._freeplay_sp_extinctions = fp.get("sp_extinctions", {})
+            self._freeplay_sp_last_ext_time = fp.get("sp_last_ext_time", {})
+            self._freeplay_sp_min_pop = fp.get("sp_min_pop", {})
         elif loaded_dna:
             # Resume from save — use loaded DNA directly as starting population
             dna_list = loaded_dna
@@ -324,14 +327,16 @@ class Simulation:
             self._freeplay_peak_pop = len(dna_list)
             self._freeplay_history: list[dict] = []
             self._freeplay_history_timer = 0.0
+            self._freeplay_sp_extinctions: dict[str, int] = {}
+            self._freeplay_sp_last_ext_time: dict[str, float] = {}
+            self._freeplay_sp_min_pop: dict[str, int] = {}
         else:
-            # Per-species initial populations
+            # Per-species initial populations (breed from stash if available)
             dna_list = []
             for sp in self.settings.species_registry.all():
                 if not sp.enabled:
                     continue
-                for _ in range(sp.settings.freeplay_initial_population):
-                    dna_list.append(DNA.random_for_species(sp.id))
+                dna_list.extend(self._dna_for_species(sp))
             world = self._create_world(dna_list)
             world.freeplay = True
             world.generation = 0
@@ -344,6 +349,9 @@ class Simulation:
             self._freeplay_peak_pop = len(dna_list)
             self._freeplay_history: list[dict] = []
             self._freeplay_history_timer = 0.0
+            self._freeplay_sp_extinctions: dict[str, int] = {}
+            self._freeplay_sp_last_ext_time: dict[str, float] = {}
+            self._freeplay_sp_min_pop: dict[str, int] = {}
 
         while self.running:
             dt = self.clock.tick(FPS) / 1000.0
@@ -365,6 +373,7 @@ class Simulation:
 
                 if self.settings_panel.visible:
                     self.settings = self.settings_panel.handle_event(event, self.settings)
+                    world.settings = self.settings
                     if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEWHEEL):
                         if self.settings_panel.consumes_click(*pygame.mouse.get_pos()):
                             continue
@@ -405,6 +414,9 @@ class Simulation:
                                     "births_per_min": self._freeplay_births_per_min,
                                     "deaths_per_min": self._freeplay_deaths_per_min,
                                     "history": self._freeplay_history,
+                                    "sp_extinctions": self._freeplay_sp_extinctions,
+                                    "sp_last_ext_time": self._freeplay_sp_last_ext_time,
+                                    "sp_min_pop": self._freeplay_sp_min_pop,
                                 }
                                 save_snapshot(
                                     world=world,
@@ -424,14 +436,14 @@ class Simulation:
                             elif pause_result.startswith("import_species:"):
                                 imported_id = pause_result.split(":", 1)[1]
                                 sp = self.settings.species_registry.get(imported_id)
-                                if sp and hasattr(sp, "_imported_dna"):
-                                    for dna in sp._imported_dna:
+                                if sp and sp.has_dna_stash:
+                                    for dna_dict in sp.dna_stash:
+                                        dna = DNA.from_dict(dna_dict)
                                         x = random.uniform(50, self.settings.world_width - 50)
                                         y = random.uniform(50, self.settings.world_height - 50)
                                         child = Creature(dna, x, y, species=sp)
                                         child.energy = sp.settings.freeplay_child_energy
                                         world.creatures.append(child)
-                                    del sp._imported_dna
                                 self.paused = False
                             elif pause_result in ("main_menu", "restart"):
                                 if pause_result == "restart":
@@ -440,8 +452,7 @@ class Simulation:
                                     for sp in self.settings.species_registry.all():
                                         if not sp.enabled:
                                             continue
-                                        for _ in range(sp.settings.freeplay_initial_population):
-                                            dna_list.append(DNA.random_for_species(sp.id))
+                                        dna_list.extend(self._dna_for_species(sp))
                                     world = self._create_world(dna_list)
                                     world.freeplay = True
                                     world.generation = 0
@@ -454,6 +465,9 @@ class Simulation:
                                     self._freeplay_births_per_min = 0.0
                                     self._freeplay_deaths_per_min = 0.0
                                     self._freeplay_stats_timer = 0.0
+                                    self._freeplay_sp_extinctions.clear()
+                                    self._freeplay_sp_last_ext_time.clear()
+                                    self._freeplay_sp_min_pop.clear()
                                     self.renderer.reset_tracking()
                                     continue
                                 return
@@ -502,6 +516,7 @@ class Simulation:
 
             # Update settings panel dragging
             self.settings = self.settings_panel.update_dragging(self.settings)
+            world.settings = self.settings
 
             # Update simulation
             if not self.paused:
@@ -550,6 +565,14 @@ class Simulation:
                 if alive > self._freeplay_peak_pop:
                     self._freeplay_peak_pop = alive
 
+            # Track per-species min population
+            if not self.paused:
+                for sp in self.settings.species_registry.all():
+                    alive_ct = world.alive_count_by_species(sp.id)
+                    if alive_ct > 0:
+                        cur_min = self._freeplay_sp_min_pop.get(sp.id, alive_ct)
+                        self._freeplay_sp_min_pop[sp.id] = min(alive_ct, cur_min)
+
             # Check for per-species extinction
             if not self.paused:
                 from pangea.settings import (
@@ -561,6 +584,11 @@ class Simulation:
                         continue
                     if not sp.enabled:
                         continue
+                    # Track per-species extinction event
+                    self._freeplay_sp_extinctions[sp.id] = (
+                        self._freeplay_sp_extinctions.get(sp.id, 0) + 1
+                    )
+                    self._freeplay_sp_last_ext_time[sp.id] = self._freeplay_elapsed
                     ss = sp.settings
                     if ss.extinction_mode == EXTINCTION_RESPAWN_BEST:
                         # Select from dead creatures of this species
@@ -574,6 +602,9 @@ class Simulation:
                         )
                         respawn_count = ss.freeplay_initial_population
                         if top_dna:
+                            # Auto-stash top DNA if enabled
+                            if ss.auto_stash_dna:
+                                sp.dna_stash = [d.to_dict() for d in top_dna]
                             new_dna = create_next_generation(
                                 top_dna,
                                 population_size=respawn_count,
@@ -596,6 +627,7 @@ class Simulation:
                             child = Creature(dna, x, y, species=sp)
                             child.energy = ss.freeplay_child_energy
                             world.creatures.append(child)
+                        self._freeplay_sp_min_pop[sp.id] = respawn_count
                     elif ss.extinction_mode == EXTINCTION_RESPAWN_RANDOM:
                         respawn_count = max(1, ss.freeplay_initial_population // 2)
                         for _ in range(respawn_count):
@@ -605,6 +637,7 @@ class Simulation:
                             child = Creature(dna, x, y, species=sp)
                             child.energy = ss.freeplay_child_energy
                             world.creatures.append(child)
+                        self._freeplay_sp_min_pop[sp.id] = respawn_count
                     # EXTINCTION_PERMANENT: do nothing
 
                 # Total extinction — all species gone
@@ -634,13 +667,12 @@ class Simulation:
     def _run_host_freeplay(self) -> None:
         """Run freeplay mode as network host."""
         self.tools = PlayerTools()
-        # Per-species initial populations
+        # Per-species initial populations (breed from stash if available)
         dna_list = []
         for sp in self.settings.species_registry.all():
             if not sp.enabled:
                 continue
-            for _ in range(sp.settings.freeplay_initial_population):
-                dna_list.append(DNA.random_for_species(sp.id))
+            dna_list.extend(self._dna_for_species(sp))
         world = self._create_world(dna_list)
         world.freeplay = True
         world.generation = 0
@@ -654,6 +686,9 @@ class Simulation:
         self._freeplay_peak_pop = len(dna_list)
         self._freeplay_history: list[dict] = []
         self._freeplay_history_timer = 0.0
+        self._freeplay_sp_extinctions: dict[str, int] = {}
+        self._freeplay_sp_last_ext_time: dict[str, float] = {}
+        self._freeplay_sp_min_pop: dict[str, int] = {}
         frame_counter = 0
 
         # Send full state to any already-connected clients
@@ -685,6 +720,7 @@ class Simulation:
                     continue
                 if self.settings_panel.visible:
                     self.settings = self.settings_panel.handle_event(event, self.settings)
+                    world.settings = self.settings
                     if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEWHEEL):
                         if self.settings_panel.consumes_click(*pygame.mouse.get_pos()):
                             continue
@@ -725,6 +761,9 @@ class Simulation:
                                     "births_per_min": self._freeplay_births_per_min,
                                     "deaths_per_min": self._freeplay_deaths_per_min,
                                     "history": self._freeplay_history,
+                                    "sp_extinctions": self._freeplay_sp_extinctions,
+                                    "sp_last_ext_time": self._freeplay_sp_last_ext_time,
+                                    "sp_min_pop": self._freeplay_sp_min_pop,
                                 }
                                 save_snapshot(
                                     world=world, settings_dict=self.settings.to_dict(),
@@ -734,14 +773,14 @@ class Simulation:
                             elif pause_result.startswith("import_species:"):
                                 imported_id = pause_result.split(":", 1)[1]
                                 sp = self.settings.species_registry.get(imported_id)
-                                if sp and hasattr(sp, "_imported_dna"):
-                                    for dna in sp._imported_dna:
+                                if sp and sp.has_dna_stash:
+                                    for dna_dict in sp.dna_stash:
+                                        dna = DNA.from_dict(dna_dict)
                                         x = random.uniform(50, self.settings.world_width - 50)
                                         y = random.uniform(50, self.settings.world_height - 50)
                                         child = Creature(dna, x, y, species=sp)
                                         child.energy = sp.settings.freeplay_child_energy
                                         world.creatures.append(child)
-                                    del sp._imported_dna
                                 self.paused = False
                             elif pause_result == "restart":
                                 self.tools.reset()
@@ -749,8 +788,7 @@ class Simulation:
                                 for sp in self.settings.species_registry.all():
                                     if not sp.enabled:
                                         continue
-                                    for _ in range(sp.settings.freeplay_initial_population):
-                                        dna_list.append(DNA.random_for_species(sp.id))
+                                    dna_list.extend(self._dna_for_species(sp))
                                 world = self._create_world(dna_list)
                                 world.freeplay = True
                                 world.generation = 0
@@ -763,6 +801,9 @@ class Simulation:
                                 self._freeplay_births_per_min = 0.0
                                 self._freeplay_deaths_per_min = 0.0
                                 self._freeplay_stats_timer = 0.0
+                                self._freeplay_sp_extinctions.clear()
+                                self._freeplay_sp_last_ext_time.clear()
+                                self._freeplay_sp_min_pop.clear()
                                 self.renderer.reset_tracking()
                                 frame_counter = 0
                                 continue
@@ -807,6 +848,7 @@ class Simulation:
                     self.tools.on_mouse_up(wmx, wmy)
 
             self.settings = self.settings_panel.update_dragging(self.settings)
+            world.settings = self.settings
 
             if not self.paused:
                 if self.fast_forward:
@@ -849,6 +891,14 @@ class Simulation:
                 if alive > self._freeplay_peak_pop:
                     self._freeplay_peak_pop = alive
 
+            # Track per-species min population
+            if not self.paused:
+                for sp in self.settings.species_registry.all():
+                    alive_ct = world.alive_count_by_species(sp.id)
+                    if alive_ct > 0:
+                        cur_min = self._freeplay_sp_min_pop.get(sp.id, alive_ct)
+                        self._freeplay_sp_min_pop[sp.id] = min(alive_ct, cur_min)
+
             # Per-species extinction handling
             if not self.paused:
                 from pangea.settings import (
@@ -860,6 +910,11 @@ class Simulation:
                         continue
                     if not sp.enabled:
                         continue
+                    # Track per-species extinction event
+                    self._freeplay_sp_extinctions[sp.id] = (
+                        self._freeplay_sp_extinctions.get(sp.id, 0) + 1
+                    )
+                    self._freeplay_sp_last_ext_time[sp.id] = self._freeplay_elapsed
                     ss = sp.settings
                     if ss.extinction_mode == EXTINCTION_RESPAWN_BEST:
                         sp_creatures = [
@@ -872,6 +927,9 @@ class Simulation:
                         )
                         respawn_count = ss.freeplay_initial_population
                         if top_dna:
+                            # Auto-stash top DNA if enabled
+                            if ss.auto_stash_dna:
+                                sp.dna_stash = [d.to_dict() for d in top_dna]
                             new_dna = create_next_generation(
                                 top_dna,
                                 population_size=respawn_count,
@@ -894,6 +952,7 @@ class Simulation:
                             child = Creature(dna, x, y, species=sp)
                             child.energy = ss.freeplay_child_energy
                             world.creatures.append(child)
+                        self._freeplay_sp_min_pop[sp.id] = respawn_count
                     elif ss.extinction_mode == EXTINCTION_RESPAWN_RANDOM:
                         respawn_count = max(1, ss.freeplay_initial_population // 2)
                         for _ in range(respawn_count):
@@ -903,6 +962,7 @@ class Simulation:
                             child = Creature(dna, x, y, species=sp)
                             child.energy = ss.freeplay_child_energy
                             world.creatures.append(child)
+                        self._freeplay_sp_min_pop[sp.id] = respawn_count
 
                 if world.alive_count() == 0:
                     self.renderer.reset_tracking()
@@ -1137,27 +1197,63 @@ class Simulation:
         for c in alive_creatures:
             by_species.setdefault(c.dna.species_id, []).append(c)
 
-        def _species_stats(creatures: list) -> dict:
-            n = len(creatures)
+        def _species_stats(sp_id: str, alive_list: list, all_creatures: list) -> dict:
+            import numpy as np
+            n = len(alive_list)
+            ext_count = self._freeplay_sp_extinctions.get(sp_id, 0)
+            last_ext = self._freeplay_sp_last_ext_time.get(sp_id, 0.0)
+            time_since = (self._freeplay_elapsed - last_ext) if ext_count > 0 else 0.0
+            min_pop = self._freeplay_sp_min_pop.get(sp_id, 0)
+
+            # Avg time to first food (alive creatures that have eaten)
+            eaten = [c.time_to_first_food for c in alive_list if c.time_to_first_food >= 0]
+            avg_first_food = sum(eaten) / len(eaten) if eaten else -1.0
+
+            # Avg energy at death (all creatures that have died)
+            dead_e = [c.energy_at_death for c in all_creatures if c.energy_at_death >= 0]
+            avg_energy_at_death = sum(dead_e) / len(dead_e) if dead_e else -1.0
+
+            # Genetic diversity (weight variance across alive population)
+            if n >= 2:
+                weight_arrays = [
+                    np.concatenate([w.ravel() for w in c.dna.weights])
+                    for c in alive_list
+                ]
+                genetic_diversity = float(np.var(np.array(weight_arrays), axis=0).mean())
+            else:
+                genetic_diversity = 0.0
+
             if n == 0:
                 return {
                     "count": 0, "avg_gen": 0, "avg_food": 0, "avg_energy": 0,
                     "avg_age": 0, "avg_offspring": 0,
                     "avg_speed": 0, "avg_size": 0, "avg_vision": 0,
                     "avg_efficiency": 0, "avg_lifespan": 0,
+                    "extinction_count": ext_count,
+                    "time_since_extinction": time_since,
+                    "min_pop": min_pop,
+                    "avg_first_food_time": avg_first_food,
+                    "avg_energy_at_death": avg_energy_at_death,
+                    "genetic_diversity": genetic_diversity,
                 }
             return {
                 "count": n,
-                "avg_gen": sum(c.generation for c in creatures) / n,
-                "avg_food": sum(c.food_eaten for c in creatures) / n,
-                "avg_energy": sum(c.energy for c in creatures) / n,
-                "avg_age": sum(c.age for c in creatures) / n,
-                "avg_offspring": sum(c.offspring_count for c in creatures) / n,
-                "avg_speed": sum(c.dna.speed for c in creatures) / n,
-                "avg_size": sum(c.dna.size for c in creatures) / n,
-                "avg_vision": sum(c.dna.vision for c in creatures) / n,
-                "avg_efficiency": sum(c.dna.efficiency for c in creatures) / n,
-                "avg_lifespan": sum(c.dna.lifespan for c in creatures) / n,
+                "avg_gen": sum(c.generation for c in alive_list) / n,
+                "avg_food": sum(c.food_eaten for c in alive_list) / n,
+                "avg_energy": sum(c.energy for c in alive_list) / n,
+                "avg_age": sum(c.age for c in alive_list) / n,
+                "avg_offspring": sum(c.offspring_count for c in alive_list) / n,
+                "avg_speed": sum(c.dna.speed for c in alive_list) / n,
+                "avg_size": sum(c.dna.size for c in alive_list) / n,
+                "avg_vision": sum(c.dna.vision for c in alive_list) / n,
+                "avg_efficiency": sum(c.dna.efficiency for c in alive_list) / n,
+                "avg_lifespan": sum(c.dna.lifespan for c in alive_list) / n,
+                "extinction_count": ext_count,
+                "time_since_extinction": time_since,
+                "min_pop": min_pop,
+                "avg_first_food_time": avg_first_food,
+                "avg_energy_at_death": avg_energy_at_death,
+                "genetic_diversity": genetic_diversity,
             }
 
         snapshot = {
@@ -1172,10 +1268,18 @@ class Simulation:
                 if n_alive else 0
             ),
         }
+        # Group all creatures (alive + dead) by species
+        all_by_species: dict[str, list] = {sp.id: [] for sp in registry.all()}
+        for c in world.creatures:
+            all_by_species.setdefault(c.dna.species_id, []).append(c)
+
         # Per-species population counts and detailed stats
         for sp in registry.all():
             snapshot[sp.id] = len(by_species.get(sp.id, []))
-            snapshot[f"{sp.id}_stats"] = _species_stats(by_species.get(sp.id, []))
+            snapshot[f"{sp.id}_stats"] = _species_stats(
+                sp.id, by_species.get(sp.id, []),
+                all_by_species.get(sp.id, []),
+            )
         return snapshot
 
     # ── World Creation Helpers ───────────────────────────────
@@ -1192,3 +1296,32 @@ class Simulation:
         world = World(creatures, settings=self.settings, tools=self.tools, use_gpu=self.use_gpu)
         self._active_world = world
         return world
+
+    def _stash_dna(self, species_id: str) -> None:
+        """Callback for menu: stash top DNA from the active world onto a species."""
+        if self._active_world is None:
+            return
+        sp = self.settings.species_registry.get(species_id)
+        if sp is None:
+            return
+        from pangea.save_load import stash_species_dna
+        stash_species_dna(sp, self._active_world.creatures, self.settings)
+
+    @staticmethod
+    def _dna_for_species(sp) -> list[DNA]:
+        """Build initial DNA list for a species, breeding from stash if available."""
+        count = sp.settings.freeplay_initial_population
+        if sp.has_dna_stash:
+            parent_dna = [DNA.from_dict(d) for d in sp.dna_stash]
+            ss = sp.settings
+            return create_next_generation(
+                parent_dna,
+                population_size=count,
+                mutation_rate=ss.mutation_rate,
+                mutation_strength=ss.mutation_strength,
+                crossover_rate=ss.crossover_rate,
+                min_parents=ss.min_population,
+                weight_clamp=ss.weight_clamp,
+                trait_mutation_range=ss.trait_mutation_range,
+            )
+        return [DNA.random_for_species(sp.id) for _ in range(count)]

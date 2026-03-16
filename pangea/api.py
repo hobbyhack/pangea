@@ -41,12 +41,18 @@ def _get_db() -> sqlite3.Connection:
             name TEXT NOT NULL,
             generation INTEGER DEFAULT 0,
             dna_json TEXT NOT NULL,
+            species_config_json TEXT,
             uploaded_at TEXT NOT NULL,
             upload_token TEXT NOT NULL,
             wins INTEGER DEFAULT 0,
             losses INTEGER DEFAULT 0
         )
     """)
+    # Migration: add species_config_json column if missing (existing DBs)
+    try:
+        db.execute("SELECT species_config_json FROM species LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute("ALTER TABLE species ADD COLUMN species_config_json TEXT")
     db.execute("""
         CREATE TABLE IF NOT EXISTS matches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,6 +75,7 @@ class SpeciesUpload(BaseModel):
     species_name: str = ""
     generation: int = 0
     creatures: list[dict]
+    species_config: dict | None = None  # optional Species.to_dict() for full config
 
 
 class MatchResult(BaseModel):
@@ -89,13 +96,14 @@ def upload_species(data: SpeciesUpload):
     token = secrets.token_urlsafe(16)
     now = datetime.now().isoformat()
     dna_json = json.dumps(data.creatures)
+    config_json = json.dumps(data.species_config) if data.species_config else None
     name = data.species_name or f"species_{now[:10]}"
 
     db = _get_db()
     cursor = db.execute(
-        "INSERT INTO species (name, generation, dna_json, uploaded_at, upload_token) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (name, data.generation, dna_json, now, token),
+        "INSERT INTO species (name, generation, dna_json, species_config_json, uploaded_at, upload_token) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (name, data.generation, dna_json, config_json, now, token),
     )
     db.commit()
     species_id = cursor.lastrowid
@@ -131,7 +139,7 @@ def get_species(species_id: int):
     """Download a species by ID."""
     db = _get_db()
     row = db.execute(
-        "SELECT id, name, generation, dna_json, wins, losses "
+        "SELECT id, name, generation, dna_json, species_config_json, wins, losses "
         "FROM species WHERE id = ?",
         (species_id,),
     ).fetchone()
@@ -140,7 +148,7 @@ def get_species(species_id: int):
     if row is None:
         raise HTTPException(404, "Species not found")
 
-    return {
+    result = {
         "id": row["id"],
         "species_name": row["name"],
         "generation": row["generation"],
@@ -148,6 +156,10 @@ def get_species(species_id: int):
         "wins": row["wins"],
         "losses": row["losses"],
     }
+    config_json = row["species_config_json"]
+    if config_json:
+        result["species_config"] = json.loads(config_json)
+    return result
 
 
 @app.delete("/species/{species_id}")
