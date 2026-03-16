@@ -82,7 +82,7 @@ class Simulation:
         self.settings.world_height = config.WINDOW_HEIGHT
         self.tools = PlayerTools()
         self.settings_panel = SettingsPanel()
-        self.use_gpu = True  # Enable Taichi GPU compute (CUDA/Vulkan/Metal/CPU fallback)
+        self.use_gpu = False  # Enable Taichi GPU compute (CUDA/Vulkan/Metal/CPU fallback)
         self._active_world: World | None = None
         self._net_host: NetworkHost | None = None
         self._net_client: NetworkClient | None = None
