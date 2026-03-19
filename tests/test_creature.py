@@ -41,6 +41,7 @@ class TestCreature:
         assert c.alive
         assert c.energy == BASE_ENERGY
         assert c.food_eaten == 0
+        assert c.feeds_count == 0
         assert c.age == 0.0
 
     def test_sensor_output_shape(self):
@@ -133,6 +134,7 @@ class TestCreature:
         # Default species is herbivore, gets bonus
         assert c.energy == 50.0 + 30.0 * HERBIVORE_FOOD_BONUS
         assert c.food_eaten == 1
+        assert c.feeds_count == 1
 
     def test_dead_creature_does_not_update(self):
         """Dead creatures should not move or lose energy."""
@@ -170,12 +172,13 @@ class TestCreature:
         assert c.energy == pytest.approx(50.0 + 20.0 * SCAVENGER_FOOD_PENALTY)
 
     def test_gain_energy(self):
-        """gain_energy should add energy without food count."""
+        """gain_energy should add energy and feeds_count but not food_eaten."""
         c = self._make_creature()
         c.energy = 50.0
         c.gain_energy(15.0)
         assert c.energy == pytest.approx(65.0)
         assert c.food_eaten == 0
+        assert c.feeds_count == 1
 
     def test_speed_multiplier_affects_movement(self):
         """speed_multiplier should scale movement distance."""

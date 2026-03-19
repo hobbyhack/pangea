@@ -405,7 +405,7 @@ class World:
                 if dist < cr + food.radius:
                     sp_heal = (sp.settings.food_heal if sp else
                                self.settings.food_heal)
-                    creature.eat(food.energy, sp_heal)
+                    creature.eat(food.energy, sp_heal, is_corpse=food.is_corpse)
                     eaten_indices.append(i)
 
             for i in reversed(eaten_indices):
@@ -502,7 +502,7 @@ class World:
                 dy = creature.y - dead.y
                 dist = math.sqrt(dx * dx + dy * dy)
                 if dist < sp.scavenge_death_radius:
-                    creature.gain_energy(sp.scavenge_death_energy)
+                    creature.gain_energy(sp.scavenge_death_energy, source="scavenge")
             # Spawn a corpse food item so scavengers can find it later
             self.food.append(Food(
                 x=dead.x,

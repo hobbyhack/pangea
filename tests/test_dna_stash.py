@@ -120,7 +120,8 @@ class TestStashHelpers:
         for i in range(5):
             dna = _make_dna("alpha")
             c = Creature(dna, 100, 100, species=sp)
-            c.food_eaten = i  # fitness correlates with food_eaten
+            c.food_eaten = i  # fitness correlates with feeds_count
+            c.feeds_count = i
             creatures.append(c)
 
         count = stash_species_dna(sp, creatures)
@@ -139,7 +140,9 @@ class TestStashHelpers:
             Creature(_make_dna("beta"), 200, 200, species=sp_b),
         ]
         creatures[0].food_eaten = 5
+        creatures[0].feeds_count = 5
         creatures[1].food_eaten = 10
+        creatures[1].feeds_count = 10
 
         count = stash_species_dna(sp_a, creatures)
         assert count == 1

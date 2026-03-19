@@ -56,6 +56,8 @@ def _creature_snapshot(c) -> list:
         float(c.energy), c.alive, float(c.dna.effective_radius),
         "", c.food_eaten, float(c.age), c.dna.species_id,
         c.death_processed, float(c.under_attack),
+        c.feeds_count,
+        c.plant_feeds, c.attack_feeds, c.corpse_feeds,
     ]
 
 
@@ -114,6 +116,10 @@ def apply_snapshot(world: World, data: dict) -> None:
         # sc[10] = species_id (read-only from DNA, skip)
         cr.death_processed = sc[11]
         cr.under_attack = sc[12]
+        cr.feeds_count = sc[13] if len(sc) > 13 else 0
+        cr.plant_feeds = sc[14] if len(sc) > 14 else 0
+        cr.attack_feeds = sc[15] if len(sc) > 15 else 0
+        cr.corpse_feeds = sc[16] if len(sc) > 16 else 0
 
     # ── Food ─────────────────────────────────────────────────
     from pangea.world import Food

@@ -50,12 +50,13 @@ def evaluate_fitness(
     """
     Calculate a creature's fitness score.
 
-    Fitness = (food_eaten * food_weight) + (survival_time * time_weight)
+    Fitness = (feeds_count * food_weight) + (survival_time * time_weight)
               + (remaining_energy * energy_weight)
               + (territory_cells * territory_weight)
               + (offspring_count * offspring_weight)
 
-    Food eaten is weighted most heavily because it's the primary survival skill.
+    Feeds count (all energy gains: plants, attacks, corpses, scavenge bonuses)
+    is weighted most heavily because it's the primary survival skill.
     Offspring weight rewards creatures that successfully reproduced.
     Weights come from per-species settings if available, then SimSettings, then config.
     """
@@ -83,7 +84,7 @@ def evaluate_fitness(
         offspring_w = FITNESS_OFFSPRING_WEIGHT
         distance_w = FITNESS_DISTANCE_WEIGHT
     return (
-        creature.food_eaten * food_w
+        creature.feeds_count * food_w
         + creature.age * time_w
         + creature.energy * energy_w
         + len(creature.territory_cells) * territory_w

@@ -149,8 +149,8 @@ class Renderer:
 
         # Track previous alive state for death particles
         self._prev_alive: dict[int, bool] = {}
-        # Track previous food count for eat particles
-        self._prev_food_eaten: dict[int, int] = {}
+        # Track previous feeds count for eat particles
+        self._prev_feeds_count: dict[int, int] = {}
 
         # Pre-render glow surfaces for performance
         self._food_glow = self._make_glow_surface(12, (30, 140, 30, 60))
@@ -590,11 +590,11 @@ class Renderer:
                 self.particles.emit_death(creature.x, creature.y, color)
             self._prev_alive[cid] = creature.alive
 
-            # Eat detection
-            prev_food = self._prev_food_eaten.get(cid, 0)
-            if creature.food_eaten > prev_food:
+            # Eat detection (triggers on all energy gains including attacks/scavenge)
+            prev_feeds = self._prev_feeds_count.get(cid, 0)
+            if creature.feeds_count > prev_feeds:
                 self.particles.emit_eat(creature.x, creature.y)
-            self._prev_food_eaten[cid] = creature.food_eaten
+            self._prev_feeds_count[cid] = creature.feeds_count
 
     # ── HUD ──────────────────────────────────────────────────
 
@@ -825,7 +825,7 @@ class Renderer:
     def reset_tracking(self) -> None:
         """Reset particle/trail tracking for a new generation."""
         self._prev_alive.clear()
-        self._prev_food_eaten.clear()
+        self._prev_feeds_count.clear()
 
     # ── Evolution Panel ──────────────────────────────────────
 
@@ -933,7 +933,7 @@ class Renderer:
             )
 
             # Card background
-            card_h = 130
+            card_h = 146
             card_bg = pygame.Surface((panel_w - 24, card_h), pygame.SRCALPHA)
             card_bg.fill((20, 22, 35, 180))
             self.surface.blit(card_bg, (panel_x + 12, y))
@@ -954,7 +954,7 @@ class Renderer:
 
             if n > 0:
                 avg_gen = sum(c.generation for c in creatures) / n
-                avg_food = sum(c.food_eaten for c in creatures) / n
+                avg_food = sum(c.feeds_count for c in creatures) / n
                 avg_energy = sum(c.energy for c in creatures) / n
                 avg_age = sum(c.age for c in creatures) / n
                 avg_offspring = sum(c.offspring_count for c in creatures) / n
@@ -974,7 +974,7 @@ class Renderer:
                 lx = panel_x + 20
                 row1_parts = [
                     (f"Gen:{avg_gen:.1f}", "Avg evolutionary generation"),
-                    (f"  Food:{avg_food:.1f}", "Avg food items eaten per creature"),
+                    (f"  Feeds:{avg_food:.1f}", "Avg feeds per creature (P=plant A=attack C=corpse)"),
                     (f"  Energy:{avg_energy:.0f}", "Avg current energy level"),
                     (f"  Age:{avg_age:.0f}s", "Avg age in seconds"),
                 ]
@@ -987,7 +987,22 @@ class Renderer:
                     ))
                     rx += txt.get_width()
 
-                # Stats row 2: Extinction metrics
+                # Stats row 2: Feed breakdown (P=plant, A=attack, C=corpse)
+                avg_p = sum(c.plant_feeds for c in creatures) / n
+                avg_a = sum(c.attack_feeds for c in creatures) / n
+                avg_c = sum(c.corpse_feeds for c in creatures) / n
+                feed_row = f"P:{avg_p:.1f}  A:{avg_a:.1f}  C:{avg_c:.1f}"
+                feed_txt = self.font_small.render(
+                    feed_row, True, (130, 150, 170),
+                )
+                self.surface.blit(feed_txt, (panel_x + 20, y + 37))
+                hover_items.append((
+                    "PAC",
+                    pygame.Rect(panel_x + 20, y + 37, feed_txt.get_width(), 13),
+                    "Avg feeds breakdown: Plant / Attack / Corpse+Scavenge",
+                ))
+
+                # Stats row 3: Extinction metrics
                 ext_count = sp_stats.get("extinction_count", 0)
                 time_since = sp_stats.get("time_since_extinction", 0)
                 if ext_count > 0:
@@ -997,18 +1012,18 @@ class Renderer:
                 else:
                     row2 = "No extinctions"
                 txt2 = self.font_small.render(row2, True, (140, 220, 180))
-                self.surface.blit(txt2, (panel_x + 20, y + 37))
+                self.surface.blit(txt2, (panel_x + 20, y + 53))
                 hover_items.append((
-                    "Ext", pygame.Rect(panel_x + 20, y + 37, txt2.get_width(), 13),
+                    "Ext", pygame.Rect(panel_x + 20, y + 53, txt2.get_width(), 13),
                     "Times this species went to 0 alive and was respawned",
                 ))
 
-                # Stats row 3: Offspring + Brain %
+                # Stats row 4: Offspring + Brain %
                 row3 = f"Offspring:{avg_offspring:.1f}"
                 txt3 = self.font_small.render(row3, True, (140, 150, 170))
-                self.surface.blit(txt3, (panel_x + 20, y + 53))
+                self.surface.blit(txt3, (panel_x + 20, y + 69))
                 hover_items.append((
-                    "Offspring", pygame.Rect(panel_x + 20, y + 53, txt3.get_width(), 13),
+                    "Offspring", pygame.Rect(panel_x + 20, y + 69, txt3.get_width(), 13),
                     "Avg children produced per creature",
                 ))
 
@@ -1016,13 +1031,13 @@ class Renderer:
                     f"Brain:{brain_pct:.0f}%", True, (180, 160, 255),
                 )
                 brain_x = panel_x + 20 + txt3.get_width() + 12
-                self.surface.blit(brain_txt, (brain_x, y + 53))
+                self.surface.blit(brain_txt, (brain_x, y + 69))
                 hover_items.append((
-                    "Brain", pygame.Rect(brain_x, y + 53, brain_txt.get_width(), 13),
+                    "Brain", pygame.Rect(brain_x, y + 69, brain_txt.get_width(), 13),
                     "% of neural network weights actively used (|w| > 0.1)",
                 ))
 
-                # Stats row 4: MinPop, 1st Food, DeathE
+                # Stats row 5: MinPop, 1st Food, DeathE
                 min_pop = sp_stats.get("min_pop", 0)
                 avg_first = sp_stats.get("avg_first_food_time", -1)
                 avg_death_e = sp_stats.get("avg_energy_at_death", -1)
@@ -1037,27 +1052,27 @@ class Renderer:
                 rx4 = panel_x + 20
                 for text, tip in row4_parts:
                     txt4 = self.font_small.render(text, True, (160, 170, 190))
-                    self.surface.blit(txt4, (rx4, y + 69))
+                    self.surface.blit(txt4, (rx4, y + 85))
                     hover_items.append((
-                        text, pygame.Rect(rx4, y + 69, txt4.get_width(), 13), tip,
+                        text, pygame.Rect(rx4, y + 85, txt4.get_width(), 13), tip,
                     ))
                     rx4 += txt4.get_width()
 
-                # Stats row 5: Genetic Diversity
+                # Stats row 6: Genetic Diversity
                 diversity = sp_stats.get("genetic_diversity", 0)
                 div_txt = self.font_small.render(
                     f"Diversity:{diversity:.3f}", True, (160, 170, 190),
                 )
-                self.surface.blit(div_txt, (panel_x + 20, y + 85))
+                self.surface.blit(div_txt, (panel_x + 20, y + 101))
                 hover_items.append((
                     "Diversity",
-                    pygame.Rect(panel_x + 20, y + 85, div_txt.get_width(), 13),
+                    pygame.Rect(panel_x + 20, y + 101, div_txt.get_width(), 13),
                     "NN weight variance across population \u2014 too low means inbreeding, too high means no convergence",
                 ))
 
                 # Trait bars (bigger)
                 bar_x = panel_x + 20
-                bar_y_start = y + 98
+                bar_y_start = y + 114
                 bar_w = (panel_w - 44) // 5 - 2
                 bar_h = 10
                 trait_vals = [
@@ -1234,7 +1249,8 @@ class Renderer:
         stats_lines = [
             (f"Energy: {creature.energy:.0f} ({energy_pct:.0f}%)",
              (100, 255, 130) if energy_pct > 50 else (255, 200, 50) if energy_pct > 25 else (255, 80, 60)),
-            (f"Food:   {creature.food_eaten}", (140, 230, 140)),
+            (f"Feeds:  {creature.feeds_count}  (P:{creature.plant_feeds} A:{creature.attack_feeds} C:{creature.corpse_feeds})",
+             (140, 230, 140)),
             (f"Age:    {creature.age:.1f}s / {age_max:.0f}s", (180, 180, 200)),
             ("", (0, 0, 0)),
             (f"Speed:      {dna.speed:3d}  ({dna.max_speed:.1f} px/f)", (80, 200, 255)),

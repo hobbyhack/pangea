@@ -23,6 +23,7 @@ class TestEvolution:
         dna = DNA.random()
         c = Creature(dna, 100, 100)
         c.food_eaten = food_eaten
+        c.feeds_count = food_eaten  # fitness uses feeds_count
         c.age = age
         c.energy = energy
         return c

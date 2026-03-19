@@ -74,6 +74,7 @@ class TestUploadDownloadRoundtrip:
         c = _make_creature(x=123.4, y=567.8, registry=reg)
         c.energy = 77.5
         c.food_eaten = 3
+        c.feeds_count = 5
         c.age = 5.2
         c.heading = 1.5
         c.speed = 2.3
@@ -91,6 +92,7 @@ class TestUploadDownloadRoundtrip:
         assert c2.y == pytest.approx(567.8, rel=1e-4)
         assert c2.energy == pytest.approx(77.5, rel=1e-4)
         assert c2.food_eaten == 3
+        assert c2.feeds_count == 5
         assert c2.age == pytest.approx(5.2, rel=1e-4)
         assert c2.heading == pytest.approx(1.5, rel=1e-4)
         assert c2.speed == pytest.approx(2.3, rel=1e-4)
@@ -279,6 +281,7 @@ class TestCollisions:
         expected_gain = 30.0 * herb_sp.plant_food_multiplier
         assert c.energy == pytest.approx(50.0 + expected_gain, abs=1e-3)
         assert c.food_eaten == 1
+        assert c.feeds_count == 1
 
         result = engine.download_food_compacted(food)
         assert len(result) == 0
@@ -304,6 +307,8 @@ class TestCollisions:
 
         total_food_eaten = c1.food_eaten + c2.food_eaten
         assert total_food_eaten == 1
+        total_feeds = c1.feeds_count + c2.feeds_count
+        assert total_feeds == 1
 
 
 class TestFoodCompaction:

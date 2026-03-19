@@ -236,6 +236,10 @@ def _creature_to_dict(creature) -> dict:
         "speed": float(creature.speed),
         "energy": float(creature.energy),
         "food_eaten": creature.food_eaten,
+        "feeds_count": creature.feeds_count,
+        "plant_feeds": creature.plant_feeds,
+        "attack_feeds": creature.attack_feeds,
+        "corpse_feeds": creature.corpse_feeds,
         "age": creature.age,
         "alive": creature.alive,
         "last_turn": float(creature.last_turn),
@@ -260,6 +264,10 @@ def _creature_from_dict(data: dict):
     creature.speed = data["speed"]
     creature.energy = data["energy"]
     creature.food_eaten = data["food_eaten"]
+    creature.feeds_count = data.get("feeds_count", 0)
+    creature.plant_feeds = data.get("plant_feeds", 0)
+    creature.attack_feeds = data.get("attack_feeds", 0)
+    creature.corpse_feeds = data.get("corpse_feeds", 0)
     creature.age = data["age"]
     creature.alive = data["alive"]
     creature.last_turn = data.get("last_turn", 0.0)

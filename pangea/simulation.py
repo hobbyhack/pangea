@@ -427,7 +427,7 @@ class Simulation:
                                 alive = [c for c in world.creatures if c.alive]
                                 if alive:
                                     top_dna = [c.dna for c in sorted(
-                                        alive, key=lambda c: c.food_eaten, reverse=True,
+                                        alive, key=lambda c: c.feeds_count, reverse=True,
                                     )[:self.settings.top_performers_count]]
                                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                                     filepath = f"species/freeplay_{timestamp}.json"
@@ -1239,7 +1239,7 @@ class Simulation:
             return {
                 "count": n,
                 "avg_gen": sum(c.generation for c in alive_list) / n,
-                "avg_food": sum(c.food_eaten for c in alive_list) / n,
+                "avg_food": sum(c.feeds_count for c in alive_list) / n,
                 "avg_energy": sum(c.energy for c in alive_list) / n,
                 "avg_age": sum(c.age for c in alive_list) / n,
                 "avg_offspring": sum(c.offspring_count for c in alive_list) / n,

@@ -58,6 +58,10 @@ class Creature:
 
         self.energy = (species.settings.base_energy if species else BASE_ENERGY)
         self.food_eaten = 0
+        self.feeds_count = 0  # all energy gains (plants, attacks, corpses, scavenge)
+        self.plant_feeds = 0   # plant food eaten
+        self.attack_feeds = 0  # energy stolen via attacks
+        self.corpse_feeds = 0  # corpse eaten + scavenge proximity bonus
         self.age = 0.0  # seconds alive this generation
         self.alive = True
         self.last_turn = 0.0  # absolute radians turned last frame
@@ -89,7 +93,7 @@ class Creature:
         return (
             self.alive
             and self.age >= settings.freeplay_breed_min_age
-            and self.food_eaten >= settings.freeplay_breed_min_food
+            and self.feeds_count >= settings.freeplay_breed_min_food
             and self.energy >= settings.freeplay_breed_energy_threshold * settings.base_energy
             and self.breed_cooldown <= 0
         )
@@ -346,7 +350,8 @@ class Creature:
 
     # ── Eating ───────────────────────────────────────────────
 
-    def eat(self, food_energy: float, lifespan_heal: float = 0.0) -> None:
+    def eat(self, food_energy: float, lifespan_heal: float = 0.0,
+            is_corpse: bool = False) -> None:
         """Gain energy from eating food, scaled by species plant_food_multiplier."""
         if self.time_to_first_food < 0:
             self.time_to_first_food = self.age
@@ -355,9 +360,19 @@ class Creature:
 
         self.energy += food_energy
         self.food_eaten += 1
+        self.feeds_count += 1
+        if is_corpse:
+            self.corpse_feeds += 1
+        else:
+            self.plant_feeds += 1
         if lifespan_heal > 0:
             self.age = max(0, self.age - lifespan_heal)
 
-    def gain_energy(self, amount: float) -> None:
+    def gain_energy(self, amount: float, source: str = "attack") -> None:
         """Gain energy from non-food sources (carnivore attacks, scavenger bonus)."""
         self.energy += amount
+        self.feeds_count += 1
+        if source == "attack":
+            self.attack_feeds += 1
+        else:
+            self.corpse_feeds += 1

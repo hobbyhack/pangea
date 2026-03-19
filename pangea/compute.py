@@ -49,7 +49,8 @@ _ready = False
 
 # Field references (populated by _ensure_initialized)
 _cx = _cy = _cheading = _cspeed = _cenergy = None
-_calive = _cage = _cfood_eaten = _cunder_attack = None
+_calive = _cage = _cfood_eaten = _cfeeds_count = _cunder_attack = None
+_cplant_feeds = _cattack_feeds = _ccorpse_feeds = None
 _clast_turn = _cdist_traveled = _cdeath_processed = _cbreed_cooldown = None
 _cspecies_idx = None
 _cmax_speed = _cradius = _cvision = _cefficiency = _clifespan = None
@@ -105,7 +106,8 @@ def _allocate_fields(ti) -> None:
     """Create all Taichi fields."""
     # fmt: off
     global _cx, _cy, _cheading, _cspeed, _cenergy
-    global _calive, _cage, _cfood_eaten, _cunder_attack
+    global _calive, _cage, _cfood_eaten, _cfeeds_count, _cunder_attack
+    global _cplant_feeds, _cattack_feeds, _ccorpse_feeds
     global _clast_turn, _cdist_traveled, _cdeath_processed, _cbreed_cooldown
     global _cspecies_idx
     global _cmax_speed, _cradius, _cvision, _cefficiency, _clifespan
@@ -142,6 +144,10 @@ def _allocate_fields(ti) -> None:
     _calive = ti.field(dtype=ti.i32, shape=MC)
     _cage = ti.field(dtype=ti.f32, shape=MC)
     _cfood_eaten = ti.field(dtype=ti.i32, shape=MC)
+    _cfeeds_count = ti.field(dtype=ti.i32, shape=MC)
+    _cplant_feeds = ti.field(dtype=ti.i32, shape=MC)
+    _cattack_feeds = ti.field(dtype=ti.i32, shape=MC)
+    _ccorpse_feeds = ti.field(dtype=ti.i32, shape=MC)
     _cunder_attack = ti.field(dtype=ti.f32, shape=MC)
     _clast_turn = ti.field(dtype=ti.f32, shape=MC)
     _cdist_traveled = ti.field(dtype=ti.f32, shape=MC)
@@ -528,6 +534,8 @@ def _define_kernels(ti) -> None:
                     ti.atomic_sub(_cenergy[j], damage)
                     _cunder_attack[j] = 1.0
                     ti.atomic_add(_cenergy[i], damage * steal_frac)
+                    ti.atomic_add(_cfeeds_count[i], 1)
+                    ti.atomic_add(_cattack_feeds[i], 1)
 
     @ti.kernel
     def k_collisions(nc: int, nf: int,
@@ -573,6 +581,11 @@ def _define_kernels(ti) -> None:
                         energy_gain = _fenergy[fi] * food_mult
                         ti.atomic_add(_cenergy[i], energy_gain)
                         ti.atomic_add(_cfood_eaten[i], 1)
+                        ti.atomic_add(_cfeeds_count[i], 1)
+                        if _fis_corpse[fi] == 1:
+                            ti.atomic_add(_ccorpse_feeds[i], 1)
+                        else:
+                            ti.atomic_add(_cplant_feeds[i], 1)
                         if sp_food_heal > 0.0:
                             new_age = _cage[i] - sp_food_heal
                             if new_age < 0.0:
@@ -678,6 +691,10 @@ class ComputeEngine:
             _calive[i] = int(c.alive)
             _cage[i] = c.age
             _cfood_eaten[i] = c.food_eaten
+            _cfeeds_count[i] = c.feeds_count
+            _cplant_feeds[i] = c.plant_feeds
+            _cattack_feeds[i] = c.attack_feeds
+            _ccorpse_feeds[i] = c.corpse_feeds
             _cunder_attack[i] = c.under_attack
             _clast_turn[i] = c.last_turn
             _cdist_traveled[i] = c.distance_traveled
@@ -717,6 +734,10 @@ class ComputeEngine:
             c.alive = bool(_calive[i])
             c.age = float(_cage[i])
             c.food_eaten = int(_cfood_eaten[i])
+            c.feeds_count = int(_cfeeds_count[i])
+            c.plant_feeds = int(_cplant_feeds[i])
+            c.attack_feeds = int(_cattack_feeds[i])
+            c.corpse_feeds = int(_ccorpse_feeds[i])
             c.under_attack = float(_cunder_attack[i])
             c.last_turn = float(_clast_turn[i])
             c.distance_traveled = float(_cdist_traveled[i])
